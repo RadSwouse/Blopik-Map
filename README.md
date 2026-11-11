@@ -32,7 +32,8 @@ tab logs real detector readings and scores 60 model variants against them.
 | `src/vector.js` | OpenFreeMap tile loading + base-map renderer |
 | `src/map.js` | Small dependency-free canvas map |
 | `src/app.js`, `src/page.html` | UI |
-| `build.py` | Inlines `src/*` into `index.html` |
+| `icons/` | Official decor category icons (from Pikipedia), 64 px WebP, inlined at build time |
+| `build.py` | Inlines `src/*` and `icons/*` into `index.html` |
 | `test/` | Engine unit tests and a headless-browser UI test on a synthetic map |
 
 Edit files in `src/`, then run `python3 build.py`. Tests: `node test/engine.test.js`.
@@ -44,4 +45,5 @@ Edit files in `src/`, then run `python3 build.py`. Tests: `node test/engine.test
 - The tag mapping follows Pikipedia's *Decor Pikmin* page. To change it, edit
   `CATEGORIES` in `src/engine.js`.
 
-Map data © OpenStreetMap contributors (ODbL). Not affiliated with Niantic or Nintendo.
+Map data © OpenStreetMap contributors (ODbL). Decor icons © Nintendo / Niantic, via Pikipedia (fair use).
+Not affiliated with Niantic or Nintendo.

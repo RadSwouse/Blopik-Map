@@ -4,7 +4,16 @@
   const E = window.PBEngine;
   const $ = (s) => document.querySelector(s);
   const html = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const APP_VERSION = '2.0.0';
+  const APP_VERSION = '2.1.0';
+  // Official decor icons (Pikipedia), inlined by build.py; emoji is the fallback
+  const ICONS = window.PB_ICONS || {};
+  const ICON_IMG = {};
+  for (const [id, src] of Object.entries(ICONS)) { const im = new Image(); im.src = src; ICON_IMG[id] = im; }
+  function emojiOf(id) { return id === 'roadside' ? E.ROADSIDE.icon : (E.CAT[id] ? E.CAT[id].icon : '?'); }
+  function ic(id) {
+    const src = ICONS[id];
+    return src ? `<img class="di" src="${src}" alt="${emojiOf(id)}" onerror="this.replaceWith(this.alt)">` : emojiOf(id);
+  }
   const LS_KEY = 'pbdecor.v1';
   const MIN_LOAD_ZOOM = 14.5;
   const MAX_VIEW_M = 3200;
@@ -191,14 +200,28 @@
     }
     if (cellPx >= 20) {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const fs = Math.min(18, cellPx / 3.2);
-      ctx.font = `${fs}px system-ui, "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji", sans-serif`;
+      const sz = Math.max(12, Math.min(22, cellPx / 3.4));
+      ctx.font = `${sz * 0.85}px system-ui, "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji", sans-serif`;
       for (const c of state.index.cells.values()) {
         if (c.bbox.n < vb.s || c.bbox.s > vb.n || c.bbox.e < vb.w || c.bbox.w > vb.e) continue;
         const [x, y] = map.toScreen(c.lat, c.lon);
-        const ic = c.cats.slice(0, 3).map((id) => E.CAT[id].icon).join('') + (c.cats.length > 3 ? '+' : '');
-        ctx.globalAlpha = t && !c.cats.includes(t) ? 0.7 : 1;
-        ctx.fillText(ic, x, y);
+        const ids = c.cats.slice(0, 3);
+        const gap = sz + 3, x0 = x - ((ids.length - 1) * gap) / 2;
+        ids.forEach((id, i) => {
+          const cx = x0 + i * gap, isT = id === t;
+          ctx.globalAlpha = t && !isT ? 0.75 : 1;
+          ctx.beginPath(); ctx.arc(cx, y, sz / 2 + 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = isT ? '#dcfce7' : '#fff'; ctx.fill();
+          ctx.lineWidth = 1.5; ctx.strokeStyle = isT ? '#15803d' : 'rgba(71,85,105,.6)'; ctx.stroke();
+          const im = ICON_IMG[id];
+          if (im && im.complete && im.naturalWidth) ctx.drawImage(im, cx - sz * 0.38, y - sz * 0.38, sz * 0.76, sz * 0.76);
+          else { ctx.fillStyle = '#111'; ctx.fillText(emojiOf(id), cx, y + 1); }
+        });
+        if (c.cats.length > 3) {
+          ctx.globalAlpha = 1; ctx.fillStyle = '#334155'; ctx.font = `bold ${sz * 0.6}px system-ui, sans-serif`;
+          ctx.fillText('+' + (c.cats.length - 3), x0 + 3 * gap - 4, y);
+          ctx.font = `${sz * 0.85}px system-ui, sans-serif`;
+        }
       }
       ctx.globalAlpha = 1;
     }
@@ -310,7 +333,7 @@
     statusState.cls = '';
     if (state.target) {
       const pure = state.spots.filter((x) => x.level === 0).length;
-      statusState.main = `${E.CAT[state.target].icon} ${nTarget} cell${nTarget === 1 ? '' : 's'} · ${pure} pure spot${pure === 1 ? '' : 's'}`;
+      statusState.main = `${ic(state.target)} ${nTarget} cell${nTarget === 1 ? '' : 's'} · ${pure} pure spot${pure === 1 ? '' : 's'}`;
     } else statusState.main = `${state.index.cells.size} decor cells in view`;
     renderStatus();
     renderAll();
@@ -378,7 +401,7 @@
     const t = $('#toast'); t.textContent = msg; t.classList.add('on');
     clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms || 2600);
   }
-  function catLabel(id) { return id === 'roadside' ? E.ROADSIDE.icon + ' Roadside' : `${E.CAT[id].icon} ${E.CAT[id].name}`; }
+  function catLabel(id) { return id === 'roadside' ? ic('roadside') + ' Roadside' : `${ic(id)} ${html(E.CAT[id].name)}`; }
   function fmtDist(m) { return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
   function refPoint() { return state.me || { lat: map.lat, lon: map.lon }; }
   function dirLink(lat, lon) { return `https://www.google.com/maps/dir/?api=1&destination=${lat.toFixed(6)},${lon.toFixed(6)}&travelmode=walking`; }
@@ -386,7 +409,7 @@
   function renderAll() { renderPickLabel(); renderSpots(); renderDetector(); renderLegend(); if (state.tab === 'calibrate') renderCalibrate(); }
   function renderPickLabel() {
     $('#pickLabel').textContent = state.target ? E.CAT[state.target].name : 'Choose a decor type';
-    $('#pick .ico').textContent = state.target ? E.CAT[state.target].icon : '🎯';
+    $('#pick .ico').innerHTML = state.target ? ic(state.target) : '🎯';
   }
   function renderLegend() {
     const el = $('#legend');
@@ -414,7 +437,7 @@
     if (!state.index) { el.innerHTML = '<p class="muted">Loading…</p>'; return; }
     const nCells = [...state.index.cells.values()].filter((x) => x.cats.includes(state.target)).length;
     const ref = refPoint();
-    let out = `<div class="row" style="justify-content:space-between"><h3>${c.icon} ${html(c.name)}</h3><span class="muted small">${nCells} cell${nCells === 1 ? '' : 's'} in view</span></div>`;
+    let out = `<div class="row" style="justify-content:space-between"><h3>${ic(c.id)} ${html(c.name)}</h3><span class="muted small">${nCells} cell${nCells === 1 ? '' : 's'} in view</span></div>`;
     out += nearestHtml();
     const cuisinePending = c.cuisine.length && state.settings.cuisine !== 'never' && (cuisineQ.queue.length || cuisineQ.running);
     if (!nCells && cuisinePending) {
@@ -434,10 +457,10 @@
     if (!pureCount && state.spots.length) out += `<p class="muted">No pure spot in this view. These have the fewest other types. Try panning to nearby areas.</p>`;
     state.spots.forEach((s, i) => {
       const d = E.distM(ref.lat, ref.lon, s.lat, s.lon);
-      const others = s.otherCats.map((id) => E.CAT[id].icon).join(' ');
+      const others = s.otherCats.map((id) => ic(id)).join(' ');
       out += `<div class="card ${s.level === 0 ? 'pure' : ''}">
         <div class="spot-h"><span class="num l${Math.min(3, s.level)}">${i + 1}</span>
-          <span>${s.level === 0 ? `Only ${c.icon} ${html(c.name)}` : `${c.icon} + ${s.level} other${s.level > 1 ? 's' : ''}: <span class="icons">${others}</span>`}</span></div>
+          <span>${s.level === 0 ? `Only ${ic(c.id)} ${html(c.name)}` : `${ic(c.id)} + ${s.level} other${s.level > 1 ? 's' : ''}: <span class="icons">${others}</span>`}</span></div>
         <div class="muted small" style="margin:4px 0 8px">
           ${s.level === 0 ? 'Guaranteed decor if the map data matches the game.' : `Your guaranteed seedling is one of ${s.level + 1} types.`}
           Safe zone ±${Math.round(s.safe)} m · ${fmtDist(d)} away · ${s.targetCells} ${html(c.name)} cell${s.targetCells === 1 ? '' : 's'} in range</div>
@@ -467,10 +490,10 @@
     if (n.busy) return out + `<div class="card"><span class="muted small">⏳ ${html(n.msg)}</span></div>`;
     if (n.error) return out + `<div class="card"><span class="small">⚠️ ${html(n.error)}</span></div>`;
     const sp = n.spot;
-    if (!sp) return out + `<div class="card"><span class="small">No spot with ${c.icon} ${html(c.name)} found within ${fmtDist(n.radius)}.</span></div>`;
+    if (!sp) return out + `<div class="card"><span class="small">No spot with ${ic(c.id)} ${html(c.name)} found within ${fmtDist(n.radius)}.</span></div>`;
     const others = sp.level === 0 ? '' : ` (+${sp.level} other type${sp.level > 1 ? 's' : ''})`;
     return out + `<div class="card ${sp.level === 0 ? 'pure' : ''}"><div class="spot-h"><span class="num l${Math.min(3, sp.level)}">📍</span>
-      <span>${sp.level === 0 ? `Nearest spot with only ${c.icon}` : `No pure spot within ${fmtDist(n.radius)}. Nearest with fewest others${others}`}</span></div>
+      <span>${sp.level === 0 ? `Nearest spot with only ${ic(c.id)}` : `No pure spot within ${fmtDist(n.radius)}. Nearest with fewest others${others}`}</span></div>
       <div class="muted small" style="margin:4px 0 8px">${fmtDist(sp.distance)} away · safe zone ±${Math.round(sp.safe)} m</div>
       <div class="row"><button class="btn sm" id="nearShow">Show</button><a class="btn sm" href="${dirLink(sp.lat, sp.lon)}" target="_blank" rel="noopener">Walk there ↗</a></div></div>`;
   }
@@ -545,7 +568,7 @@
     }
     if (!state.isolatable.length) return '<p class="muted">No decor locations in this view.</p>';
     return `<h3 style="margin-top:14px">In this view</h3><div class="chips">` + state.isolatable.map((x) =>
-      `<button class="chip ${x.pureM2 > 0 ? 'target' : ''}" data-t="${x.id}" title="${x.n} cells">${E.CAT[x.id].icon} ${html(E.CAT[x.id].name)}${x.pureM2 > 0 ? ' ★' : ''}</button>`).join('') +
+      `<button class="chip ${x.pureM2 > 0 ? 'target' : ''}" data-t="${x.id}" title="${x.n} cells">${ic(x.id)} ${html(E.CAT[x.id].name)}${x.pureM2 > 0 ? ' ★' : ''}</button>`).join('') +
       `</div><p class="muted small">★ = has at least one spot where it is the only type.</p>`;
   }
   function bindIsolatable(el) { el.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => setTarget(b.dataset.t)); }
@@ -563,14 +586,14 @@
       <span class="muted small">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}${state.live ? ' · live' : ''}</span></div>`;
     if (t) {
       const only = d.shown.length === 1 && d.shown[0] === t;
-      out += only ? `<p><span class="badge ok">Only ${E.CAT[t].icon} ${html(E.CAT[t].name)} — guaranteed!</span></p>`
-        : d.shown.includes(t) ? `<p><span class="badge no">${E.CAT[t].icon} plus ${d.shown.length - 1} other type${d.shown.length > 2 ? 's' : ''}</span></p>`
-          : `<p><span class="badge no">${E.CAT[t].icon} ${html(E.CAT[t].name)} not in range</span></p>`;
+      out += only ? `<p><span class="badge ok">Only ${ic(t)} ${html(E.CAT[t].name)} — guaranteed!</span></p>`
+        : d.shown.includes(t) ? `<p><span class="badge no">${ic(t)} plus ${d.shown.length - 1} other type${d.shown.length > 2 ? 's' : ''}</span></p>`
+          : `<p><span class="badge no">${ic(t)} ${html(E.CAT[t].name)} not in range</span></p>`;
     }
     out += '<div class="detlist">';
-    if (d.roadside) out += `<div class="dt"><span>${E.ROADSIDE.icon}</span><span>Roadside</span></div>`;
-    d.shown.forEach((id) => { out += `<div class="dt ${id === t ? 't' : ''}"><span>${E.CAT[id].icon}</span><span>${html(E.CAT[id].name)}</span></div>`; });
-    d.hidden.forEach((id) => { out += `<div class="dt hid" title="Beyond the ${state.opts.maxShown}-icon limit"><span>${E.CAT[id].icon}</span><span>${html(E.CAT[id].name)}</span></div>`; });
+    if (d.roadside) out += `<div class="dt"><span>${ic('roadside')}</span><span>Roadside</span></div>`;
+    d.shown.forEach((id) => { out += `<div class="dt ${id === t ? 't' : ''}"><span>${ic(id)}</span><span>${html(E.CAT[id].name)}</span></div>`; });
+    d.hidden.forEach((id) => { out += `<div class="dt hid" title="Beyond the ${state.opts.maxShown}-icon limit"><span>${ic(id)}</span><span>${html(E.CAT[id].name)}</span></div>`; });
     out += '</div>';
     if (d.hidden.length) out += `<p class="muted small">Faded icons are further away than the ${state.opts.maxShown} nearest types, so they probably won't show.</p>`;
     if (d.inRange.length) {
@@ -578,7 +601,7 @@
       for (const { cell, d: dist } of d.inRange) {
         const seen = new Set();
         const src = cell.src.filter((s) => { const k = s.cat + s.name; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6)
-          .map((s) => `${E.CAT[s.cat].icon} ${html(s.name || E.CAT[s.cat].name)} <a class="small" href="https://www.openstreetmap.org/${{ n: 'node', w: 'way', r: 'relation' }[s.id[0]]}/${s.id.slice(1)}" target="_blank" rel="noopener">osm</a>`).join('<br>');
+          .map((s) => `${ic(s.cat)} ${html(s.name || E.CAT[s.cat].name)} <a class="small" href="https://www.openstreetmap.org/${{ n: 'node', w: 'way', r: 'relation' }[s.id[0]]}/${s.id.slice(1)}" target="_blank" rel="noopener">osm</a>`).join('<br>');
         out += `<tr><td>${Math.round(dist)} m</td><td>${src}</td></tr>`;
       }
       out += '</table></details>';
@@ -600,13 +623,13 @@
       <div class="row" style="margin-bottom:8px"><button class="btn sm" id="calGps">📍 Use my GPS</button>
       <span class="muted small">${c.lat != null ? `Location: ${c.lat.toFixed(5)}, ${c.lon.toFixed(5)} (${c.src === 'gps' ? 'GPS' : 'map tap'})` : 'Tap the map to set the location'}</span></div>
       <input id="calFilter" placeholder="Filter icons…" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px">
-      <div class="chips" id="calChips">${all.map((id) => `<button class="chip ${c.sel.has(id) ? 'on' : ''}" data-id="${id}">${html(catLabel(id))}</button>`).join('')}</div>
+      <div class="chips" id="calChips">${all.map((id) => `<button class="chip ${c.sel.has(id) ? 'on' : ''}" data-id="${id}">${catLabel(id)}</button>`).join('')}</div>
       <input id="calNote" placeholder="Note (optional), e.g. 'icons appeared after 3 s'" value="${html(c.note)}" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-top:8px">
       <div class="row" style="margin-top:8px"><button class="btn primary" id="calSave" ${c.lat == null || !c.sel.size ? 'disabled' : ''}>Save reading</button>
       <span class="muted small">${c.sel.size} selected</span></div>`;
     out += `<h3 style="margin-top:16px">Readings (${state.readings.length})</h3>`;
     if (state.readings.length) {
-      out += '<table>' + state.readings.slice().reverse().map((r) => `<tr><td class="small">${new Date(r.t).toLocaleDateString()}<br>${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}</td><td class="icons">${r.observed.map((id) => id === 'roadside' ? E.ROADSIDE.icon : (E.CAT[id] ? E.CAT[id].icon : '?')).join(' ')}</td><td><button class="btn sm" data-show="${r.id}">Show</button> <button class="btn sm" data-del="${r.id}">✕</button></td></tr>`).join('') + '</table>';
+      out += '<table>' + state.readings.slice().reverse().map((r) => `<tr><td class="small">${new Date(r.t).toLocaleDateString()}<br>${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}</td><td class="icons">${r.observed.map((id) => (id === 'roadside' || E.CAT[id] ? ic(id) : '?')).join(' ')}</td><td><button class="btn sm" data-show="${r.id}">Show</button> <button class="btn sm" data-del="${r.id}">✕</button></td></tr>`).join('') + '</table>';
       out += `<div class="row" style="margin-top:10px"><button class="btn primary" id="calTest">Test cell models against my readings</button></div>`;
     }
     if (state.calResults) out += calResultsHtml();
@@ -780,7 +803,7 @@
     const items = E.CATEGORIES.filter((c) => !q || c.name.toLowerCase().includes(q) || c.tags.some(([k, v]) => (k + '=' + v).includes(q)) || c.cuisine.some((x) => x.includes(q)))
       .slice().sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0) || a.index - b.index);
     $('#pickList').innerHTML = (state.target ? `<button class="pi" data-id=""><span class="ico">🗺️</span><span>Explore all (no target)</span></button>` : '') +
-      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${c.icon}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/') + ' (extra lookup, can be slow)'] : [])].join(', '))}</span></span>
+      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${ic(c.id)}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/') + ' (extra lookup, can be slow)'] : [])].join(', '))}</span></span>
         <span class="cnt">${counts.get(c.id) ? `<b>${counts.get(c.id)}</b> in view` : ''}</span></button>`).join('');
     $('#pickList').querySelectorAll('.pi').forEach((b) => b.onclick = () => { $('#picker').classList.remove('on'); setTarget(b.dataset.id || null); });
   }
@@ -841,7 +864,7 @@
         const d = state.probeDet;
         if (d && state.target) {
           const only = d.shown.length === 1 && d.shown[0] === state.target;
-          statusState.main = only ? `✅ Here: only ${E.CAT[state.target].icon} ${html(E.CAT[state.target].name)}` : `Here: ${d.roadside ? E.ROADSIDE.icon : d.shown.map((id) => E.CAT[id].icon).join(' ')}`;
+          statusState.main = only ? `✅ Here: only ${ic(state.target)} ${html(E.CAT[state.target].name)}` : `Here: ${d.roadside ? ic('roadside') : d.shown.map((id) => ic(id)).join(' ')}`;
           renderStatus();
         }
       });
