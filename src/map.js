@@ -80,11 +80,18 @@
     _moveEnd() { clearTimeout(this._meT); this._meT = setTimeout(() => this.emit('moveend', this), 120); }
     _bind() {
       const c = this.canvas;
+      // A drag remembers where it started in world pixels *at the current zoom*.
+      // Whenever the finger count changes (e.g. lifting one finger after a
+      // pinch), restart the drag from the remaining finger at the new zoom —
+      // reusing the old anchor at a different zoom teleported the map.
+      const restartDrag = (x, y, moved, t) => {
+        this.drag = { x, y, c: this.project(this.lat, this.lon), z: this.zoom, moved, t };
+      };
       c.addEventListener('pointerdown', (e) => {
-        c.setPointerCapture(e.pointerId);
+        try { c.setPointerCapture(e.pointerId); } catch (err) { /* synthetic or already-released pointer */ }
         this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
         if (this.pointers.size === 1) {
-          this.drag = { x: e.offsetX, y: e.offsetY, c: this.project(this.lat, this.lon), moved: 0, t: performance.now() };
+          restartDrag(e.offsetX, e.offsetY, 0, performance.now());
         } else if (this.pointers.size === 2) {
           const [p, q] = [...this.pointers.values()];
           this.pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), z: this.zoom };
@@ -100,6 +107,7 @@
           this.zoomAround((p.x + q.x) / 2, (p.y + q.y) / 2, this.pinch.z + Math.log2(d / this.pinch.d));
           this.pinch = { d, z: this.zoom };
         } else if (this.drag && this.pointers.size === 1) {
+          if (this.drag.z !== this.zoom) restartDrag(e.offsetX, e.offsetY, Math.max(this.drag.moved, 5), this.drag.t);
           const dx = e.offsetX - this.drag.x, dy = e.offsetY - this.drag.y;
           this.drag.moved = Math.max(this.drag.moved, Math.hypot(dx, dy));
           if (this.drag.moved > 4) {
@@ -112,6 +120,10 @@
         if (!this.pointers.has(e.pointerId)) return;
         this.pointers.delete(e.pointerId);
         if (this.pointers.size < 2) this.pinch = null;
+        if (this.pointers.size === 1 && this.drag) {
+          const [p] = [...this.pointers.values()];
+          restartDrag(p.x, p.y, 99, this.drag.t); // continue as a plain drag from the remaining finger
+        }
         if (this.pointers.size === 0 && this.drag) {
           const d = this.drag; this.drag = null;
           if (d.moved <= 4 && performance.now() - d.t < 600) {
