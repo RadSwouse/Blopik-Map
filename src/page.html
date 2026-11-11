@@ -78,6 +78,16 @@ td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertic
 .pi .ico{font-size:22px;width:28px;text-align:center}
 .pi .cnt{margin-left:auto;font-size:12px;color:var(--muted)}
 .pi .cnt b{color:var(--green)}
+#search{position:fixed;left:10px;right:10px;top:calc(10px + var(--safe-t));z-index:15;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:8px;max-width:560px}
+#search[hidden]{display:none}
+#search form{flex-wrap:nowrap}
+#searchInput{flex:1;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;font-size:16px}
+#searchResults{max-height:50vh;overflow:auto}
+#searchResults .sr{display:block;width:100%;text-align:left;border:0;background:none;padding:9px 8px;border-radius:10px;font-size:15px}
+#searchResults .sr:hover,#searchResults .sr:focus{background:var(--chip)}
+#searchResults .sr small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+#searchResults .note{padding:8px;font-size:13px;color:var(--muted)}
+@media (min-width:900px){#search{left:424px;right:auto;width:520px}}
 #toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(64px + var(--safe-t));background:#16211b;color:#fff;padding:8px 14px;border-radius:10px;font-size:14px;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
 #toast.on{opacity:.95}
 .detlist{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
@@ -108,6 +118,7 @@ a{color:var(--green)}
   <div id="status" class="pill" hidden></div>
 </div>
 <div id="fabs">
+  <button class="fab" id="btnSearch" title="Search for an address or place" aria-label="Search">🔍</button>
   <button class="fab" id="btnLocate" title="Go to my location" aria-label="My location">◎</button>
   <button class="fab" id="btnLive" title="Live detector: follow my GPS" aria-label="Live detector">📡</button>
   <button class="fab" id="btnCells" title="Show cells" aria-label="Toggle cells">▦</button>
@@ -133,6 +144,14 @@ a{color:var(--green)}
   <header><input id="pickSearch" placeholder="Search decor types…" autocomplete="off"><button class="btn" id="pickClose">Close</button></header>
   <div id="pickList"></div>
 </div></div>
+<div id="search" hidden>
+  <form id="searchForm" class="row" autocomplete="off">
+    <input id="searchInput" type="search" enterkeyhint="search" placeholder="Address, place, or lat, lon" aria-label="Search for an address or place">
+    <button class="btn primary" type="submit">Search</button>
+    <button class="btn" type="button" id="searchClose" aria-label="Close search">✕</button>
+  </form>
+  <div id="searchResults"></div>
+</div>
 <div id="toast"></div>
 <script>
 /*ICONS*/

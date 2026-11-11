@@ -18,6 +18,7 @@ Location data comes from OpenStreetMap, served as vector tiles by [OpenFreeMap](
   is coloured by how many *other* types would show alongside your chosen one.
 - Green = only your type, so the decor is guaranteed if the map data matches the game.
 - **Find nearest** searches outward (0.5 → 3 km) for the closest pure spot with a safety margin.
+- **🔍 Search** jumps to an address, place or `lat, lon` (Photon geocoder, Nominatim as backup; submit-only, ≤1 request/s).
 
 The cell grid isn't published. The default is **S2 level 17**: about 6 of those cells
 fit in the 100 m range, which matches the detector's 6–7 icon limit. The **Calibrate**

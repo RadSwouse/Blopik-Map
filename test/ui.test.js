@@ -22,7 +22,8 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
     const errors = [];
     page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
     page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-    let overpassCalls = 0, tileCalls = 0;
+    let overpassCalls = 0, tileCalls = 0, photonDown = false;
+    const geoCalls = { photon: 0, nominatim: 0 };
     const busyFirst = vp.name === 'desktop';
     await page.route('**/*', async (route) => {
       const u = route.request().url();
@@ -36,6 +37,21 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
         const [z, x, y] = m.slice(1).map(Number);
         const body = F.tileResponse(z, x, y, x % 2 === 1); // odd x: raw gzip bytes (app must unzip)
         return route.fulfill({ status: body.length ? 200 : 204, contentType: 'application/x-protobuf', headers: { 'access-control-allow-origin': '*' }, body });
+      }
+      if (u.startsWith('https://photon.komoot.io/api/')) {
+        geoCalls.photon++;
+        if (photonDown) return route.fulfill({ status: 503, body: 'down' });
+        const q = new URL(u).searchParams.get('q');
+        const feats = q.includes('Test Park') ? [
+          { geometry: { coordinates: [F.P(250, 275)[1], F.P(250, 275)[0]] }, properties: { name: 'Test Park', city: 'Seattle', state: 'Washington', country: 'United States' } },
+          { geometry: { coordinates: [F.P(5000, 5000)[1], F.P(5000, 5000)[0]] }, properties: { name: 'Test Park Annex', city: 'Elsewhere', country: 'United States' } },
+        ] : [];
+        return route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ type: 'FeatureCollection', features: feats }) });
+      }
+      if (u.startsWith('https://nominatim.openstreetmap.org/search')) {
+        geoCalls.nominatim++;
+        const [la, lo] = F.P(-200, 80);
+        return route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify([{ lat: String(la), lon: String(lo), name: 'Diner', display_name: 'Diner, 1 Main St, Seattle, WA' }]) });
       }
       if (u.includes('/api/interpreter')) {
         overpassCalls++;
@@ -112,6 +128,29 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
     await page.waitForFunction(() => [...window.PBApp.state.index.cells.values()].some((c) => c.cats.includes('sushi')), null, { timeout: 90000 });
     const sushiWait = Math.round((Date.now() - t0) / 1000);
 
+    // address search: results list → pick one
+    await page.evaluate(() => window.PBApp.map.setView(10, 10, 16));
+    await page.click('#btnSearch');
+    await page.fill('#searchInput', 'Test Park');
+    await page.press('#searchInput', 'Enter');
+    await page.waitForSelector('#searchResults .sr');
+    await page.screenshot({ path: `${OUT}/${vp.name}-8-search.png` });
+    await page.click('#searchResults .sr[data-i="0"]');
+    await page.waitForTimeout(900);
+    const afterPick = await page.evaluate(() => ({ lat: window.PBApp.map.lat, lon: window.PBApp.map.lon, hidden: document.querySelector('#search').hidden }));
+    const [pla, plo] = F.P(250, 275);
+    const searchJump = Math.round(require('../src/engine.js').distM(afterPick.lat, afterPick.lon, pla, plo));
+    // coordinates (no network) and Photon-down fallback to Nominatim
+    await page.click('#btnSearch'); await page.fill('#searchInput', '47.61, -122.33'); await page.press('#searchInput', 'Enter');
+    await page.waitForTimeout(700);
+    const coordJump = await page.evaluate(() => [window.PBApp.map.lat.toFixed(2), window.PBApp.map.lon.toFixed(2)]);
+    photonDown = true;
+    await page.click('#btnSearch'); await page.fill('#searchInput', 'Diner Seattle'); await page.press('#searchInput', 'Enter');
+    await page.waitForFunction(() => document.querySelector('#search').hidden, null, { timeout: 15000 });
+    await page.waitForTimeout(700);
+    const fallbackPin = await page.evaluate(() => window.PBApp.state.searchPin);
+    const search = { searchJump, overlayClosed: afterPick.hidden, coordJump, fallbackOk: !!fallbackPin, geoCalls: Object.assign({}, geoCalls) };
+
     // settings tab renders; switch grid → re-analysis without errors
     await page.click('#tabs button[data-tab="settings"]');
     await page.selectOption('#sGrid', 's2-18');
@@ -123,7 +162,7 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
     await page.waitForTimeout(700);
     const zoomMsg = await page.textContent('#status');
 
-    results.push({ vp: vp.name, tileCalls, overpassCalls, spots: spots.slice(0, 4), badge, det2, calTop, nearest, sushiWait, zoomMsg, errors: errors.filter((e) => !/429/.test(e)) });
+    results.push({ vp: vp.name, tileCalls, overpassCalls, spots: spots.slice(0, 4), badge, det2, calTop, nearest, sushiWait, search, zoomMsg, errors: errors.filter((e) => !/429/.test(e)) });
     await ctx.close();
   }
   await browser.close();

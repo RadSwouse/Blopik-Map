@@ -35,7 +35,7 @@
       showCells: true, showHeat: true, heatOpacity: 0.5,
     }, saved.settings || {}),
     view: saved.view || { lat: 35.6812, lon: 139.7671, zoom: 16 },
-    nearest: null,
+    nearest: null, searchPin: null,
     readings: Array.isArray(saved.readings) ? saved.readings : [],
     store: new E.FeatureStore(),
     index: null, ig: null, spots: [], heat: null,
@@ -258,6 +258,14 @@
     const [x, y] = map.toScreen(p.lat, p.lon);
     ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
     ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = '#2563eb'; ctx.fill();
+  });
+  map.layers.push(function searchPinLayer(ctx) {
+    const p = state.searchPin; if (!p) return;
+    const [x, y] = map.toScreen(p.lat, p.lon);
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.bezierCurveTo(x - 11, y - 14, x - 11, y - 30, x, y - 30); ctx.bezierCurveTo(x + 11, y - 30, x + 11, y - 14, x, y);
+    ctx.fillStyle = '#dc2626'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y - 20, 4, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
   });
   map.layers.push(function meLayer(ctx) {
     const m = state.me; if (!m) return;
@@ -771,7 +779,7 @@
   function renderHelp() {
     $('#p-help').innerHTML = `<h3>How it works</h3>
       <p class="small">The game decides a seedling's decor from the map <b>cell</b> it was found in. The detector looks at every cell whose <b>centre</b> is within <b>100 m</b> of you and shows the decor types in those cells. One seedling is always one of the shown types. So if only one type is in range, that seedling is guaranteed to be that type.</p>
-      <p class="small">This tool loads OpenStreetMap data for the area from OpenFreeMap's ready-made map files (fast, no limits). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there. <b>📍 Find nearest</b> searches outward from you (up to 3 km) for the closest spot where only your chosen type shows.</p>
+      <p class="small">This tool loads OpenStreetMap data for the area from OpenFreeMap's ready-made map files (fast, no limits). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there. <b>📍 Find nearest</b> searches outward from you (up to 3 km) for the closest spot where only your chosen type shows. <b>🔍</b> jumps to an address, place name or coordinates.</p>
       <h3>Colours</h3>
       <p class="small"><b style="color:${LEVEL_COLORS[0]}">Green</b>: only your decor type in range. <b style="color:#a16207">Yellow</b>/<b style="color:${LEVEL_COLORS[2]}">orange</b>/<b style="color:${LEVEL_COLORS[3]}">red</b>: 1/2/3+ other types too. Uncoloured: your type is out of range. Cells with your type are outlined green; other decor cells are grey.</p>
       <h3>Tips in the game</h3>
@@ -788,7 +796,7 @@
         <li>The cell grid and the polygon rules aren't published. Use <b>Calibrate</b> to log real detector readings and test which model matches.</li>
         <li>Weather and event decor don't depend on location and aren't covered.</li>
       </ul>
-      <p class="muted small">Data © OpenStreetMap contributors (ODbL), served by OpenFreeMap (OpenMapTiles schema); cuisine lookups via the Overpass API. Tag mapping from Pikipedia's Decor Pikmin page. Unofficial fan tool; not affiliated with Niantic or Nintendo.</p>`;
+      <p class="muted small">Data © OpenStreetMap contributors (ODbL), served by OpenFreeMap (OpenMapTiles schema); cuisine lookups via the Overpass API; address search by Photon (komoot) with Nominatim as backup. Tag mapping from Pikipedia's Decor Pikmin page. Unofficial fan tool; not affiliated with Niantic or Nintendo.</p>`;
   }
 
   // ---- picker ----
@@ -883,6 +891,84 @@
   }
 
   // --------------------------------------------------------------------------
+  // Address search: Photon (komoot) with Nominatim as backup. Searches only
+  // on submit, at most one request per second, results cached.
+  // --------------------------------------------------------------------------
+  const geoCache = new Map();
+  let lastGeo = 0;
+  function parseCoords(q) {
+    const m = q.trim().match(/^(-?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)$/);
+    if (!m) return null;
+    const lat = +m[1], lon = +m[2];
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return [{ lat, lon, title: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, sub: 'Coordinates' }];
+  }
+  async function fetchJson(url, ms) {
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms || 10000);
+    try {
+      const res = await fetch(url, { signal: ctl.signal, headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } finally { clearTimeout(timer); }
+  }
+  async function geocode(q) {
+    const key = q.trim().toLowerCase();
+    if (geoCache.has(key)) return geoCache.get(key);
+    const wait = 1100 - (Date.now() - lastGeo);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastGeo = Date.now();
+    let results;
+    try {
+      const u = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lat=${map.lat.toFixed(4)}&lon=${map.lon.toFixed(4)}`;
+      const j = await fetchJson(u, 10000);
+      results = (j.features || []).map((f) => {
+        const p = f.properties || {}, [lon, lat] = f.geometry.coordinates;
+        const street = [p.housenumber, p.street].filter(Boolean).join(' ');
+        const title = p.name || street || p.city || p.state || q;
+        const sub = [p.name ? street : '', p.district, p.city, p.state, p.country].filter((x, i, a) => x && x !== title && a.indexOf(x) === i).join(', ');
+        return { lat, lon, title, sub };
+      });
+    } catch (e) {
+      // backup: Nominatim (OpenStreetMap's own search)
+      await new Promise((r) => setTimeout(r, 1100));
+      const j = await fetchJson(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(q)}`, 12000);
+      results = (j || []).map((r) => {
+        const parts = String(r.display_name || '').split(', ');
+        return { lat: +r.lat, lon: +r.lon, title: r.name || parts[0], sub: parts.slice(r.name ? 1 : 1).join(', ') };
+      });
+    }
+    geoCache.set(key, results);
+    return results;
+  }
+  function openSearch() {
+    $('#search').hidden = false;
+    const inp = $('#searchInput'); inp.focus(); inp.select();
+  }
+  function closeSearch() { $('#search').hidden = true; $('#searchResults').innerHTML = ''; }
+  function goTo(r) {
+    closeSearch();
+    state.searchPin = { lat: r.lat, lon: r.lon };
+    frame(r.lat, r.lon, Math.max(16.5, Math.min(map.zoom, 17.5)));
+    toast(r.title);
+  }
+  async function runSearch(q) {
+    const box = $('#searchResults');
+    if (!q.trim()) return;
+    const coords = parseCoords(q);
+    if (coords) { goTo(coords[0]); return; }
+    box.innerHTML = '<div class="note">Searching…</div>';
+    try {
+      const res = await geocode(q);
+      if (!res.length) { box.innerHTML = '<div class="note">No places found. Try adding a city or postcode.</div>'; return; }
+      if (res.length === 1) { goTo(res[0]); return; }
+      box.innerHTML = res.map((r, i) => `<button class="sr" data-i="${i}">${html(r.title)}<small>${html(r.sub)}</small></button>`).join('');
+      box.querySelectorAll('.sr').forEach((b) => b.onclick = () => goTo(res[+b.dataset.i]));
+    } catch (e) {
+      box.innerHTML = `<div class="note">⚠️ Search is unavailable right now (${html(e.name === 'AbortError' ? 'timed out' : e.message)}). You can also type coordinates, e.g. 41.8536, -87.7367.</div>`;
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // Wire up
   // --------------------------------------------------------------------------
   $('#pick').onclick = openPicker;
@@ -892,6 +978,10 @@
   document.querySelectorAll('#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
   $('#btnLocate').onclick = () => locate((pos) => { frame(pos.lat, pos.lon, Math.max(map.zoom, 16.5)); });
   $('#btnLive').onclick = toggleLive;
+  $('#btnSearch').onclick = openSearch;
+  $('#searchClose').onclick = closeSearch;
+  $('#searchForm').onsubmit = (e) => { e.preventDefault(); runSearch($('#searchInput').value); };
+  $('#searchInput').onkeydown = (e) => { if (e.key === 'Escape') closeSearch(); };
   $('#btnCells').classList.toggle('on', state.settings.showCells);
   $('#btnHeat').classList.toggle('on', state.settings.showHeat);
   $('#btnCells').onclick = () => { state.settings.showCells = !state.settings.showCells; $('#btnCells').classList.toggle('on', state.settings.showCells); persist(); map.redraw(); };
