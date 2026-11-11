@@ -1,0 +1,2033 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f7a4d">
+<title>Pikmin Bloom Decor Finder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%231f7a4d'/%3E%3Cpath d='M32 14c6 6 6 14 0 20-6-6-6-14 0-20z' fill='%23fff'/%3E%3Cpath d='M32 34v16' stroke='%23fff' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  --green:#1f7a4d;--green-2:#16a34a;--ink:#16211b;--muted:#5d6b63;--line:#dfe5e1;--bg:#fff;--chip:#f1f5f2;
+  --yellow:#eab308;--orange:#f97316;--red:#ef4444;--blue:#2563eb;
+  --sheet-h:42vh;--safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--ink);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#e9ecef;-webkit-tap-highlight-color:transparent}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+#map{position:fixed;inset:0}
+.pill{background:#fff;border:1px solid var(--line);border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.12);padding:8px 14px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+#top{position:fixed;left:10px;right:10px;top:calc(10px + var(--safe-t));display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;pointer-events:none;z-index:5}
+#top>*{pointer-events:auto}
+#pick{font-weight:650;border:2px solid var(--green);max-width:100%;overflow:hidden;text-overflow:ellipsis}
+#pick .ico{font-size:20px}
+#status{font-size:13px;color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis}
+#status.busy::before{content:"";width:12px;height:12px;border:2px solid var(--green);border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;flex:none}
+#status.warn{color:#9a3412;border-color:#fdba74}
+@keyframes spin{to{transform:rotate(360deg)}}
+#fabs{position:fixed;right:10px;bottom:calc(var(--sheet-h) + 14px);display:flex;flex-direction:column;gap:8px;z-index:5;transition:bottom .2s}
+.fab{width:44px;height:44px;border-radius:50%;background:#fff;border:1px solid var(--line);box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:19px;display:grid;place-items:center}
+.fab.on{background:var(--green);color:#fff;border-color:var(--green)}
+#legend{position:fixed;left:10px;bottom:calc(var(--sheet-h) + 14px);z-index:5;background:rgba(255,255,255,.95);border:1px solid var(--line);border-radius:12px;padding:6px 10px;font-size:12px;display:flex;gap:10px;flex-wrap:wrap;max-width:calc(100% - 80px);transition:bottom .2s}
+#legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+#legend[hidden],#status[hidden]{display:none}
+#sheet{position:fixed;left:0;right:0;bottom:0;height:var(--sheet-h);background:var(--bg);border-radius:16px 16px 0 0;box-shadow:0 -4px 18px rgba(0,0,0,.14);z-index:6;display:flex;flex-direction:column;transition:height .2s;padding-bottom:var(--safe-b)}
+#grab{height:22px;display:grid;place-items:center;cursor:ns-resize;touch-action:none;flex:none}
+#grab::before{content:"";width:42px;height:5px;border-radius:3px;background:#c8d0cb}
+#tabs{display:flex;gap:4px;padding:0 10px 6px;border-bottom:1px solid var(--line);overflow-x:auto;flex:none}
+#tabs button{border:0;background:none;padding:7px 10px;border-radius:8px;font-weight:600;color:var(--muted);font-size:14px;white-space:nowrap}
+#tabs button.on{background:var(--chip);color:var(--green)}
+.panel{flex:1;overflow:auto;padding:10px 14px 18px;display:none;-webkit-overflow-scrolling:touch}
+.panel.on{display:block}
+.panel h3{margin:6px 0 8px;font-size:15px}
+.muted{color:var(--muted);font-size:13px}
+.small{font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 12px;font-weight:600;font-size:14px;text-decoration:none;color:var(--ink);display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:4px 9px;font-size:13px}
+.btn:disabled{opacity:.5}
+.card{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0;background:#fff}
+.card.pure{border-color:#86efac;background:#f0fdf4}
+.spot-h{display:flex;gap:8px;align-items:center;font-weight:650}
+.num{width:24px;height:24px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-size:13px;flex:none}
+.num.l1{background:var(--yellow);color:#422006}.num.l2{background:var(--orange)}.num.l3{background:var(--red)}
+.icons{font-size:18px;letter-spacing:2px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:var(--chip);border-radius:999px;padding:5px 10px;font-size:13px;display:inline-flex;gap:5px;align-items:center}
+.chip.on{background:var(--green);border-color:var(--green);color:#fff}
+.chip.target{outline:2px solid var(--green);outline-offset:1px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;font-size:14px}
+.kv label{font-weight:600}
+.kv select,.kv input{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fff}
+textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:8px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+.badge{display:inline-block;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}
+.badge.ok{background:#dcfce7;color:#166534}.badge.no{background:#fef3c7;color:#92400e}
+#picker{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:20;display:none;align-items:flex-end;justify-content:center}
+#picker.on{display:flex}
+#picker .box{background:#fff;width:min(560px,100%);max-height:86vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;padding-bottom:var(--safe-b)}
+#picker header{padding:12px 14px;display:flex;gap:8px;border-bottom:1px solid var(--line)}
+#picker header input{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+#pickList{overflow:auto;padding:6px 8px 14px}
+.pi{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:9px 8px;border-radius:10px;text-align:left;font-size:15px}
+.pi:hover,.pi.on{background:var(--chip)}
+.pi .ico{font-size:22px;width:28px;text-align:center}
+.pi .cnt{margin-left:auto;font-size:12px;color:var(--muted)}
+.pi .cnt b{color:var(--green)}
+#toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(64px + var(--safe-t));background:#16211b;color:#fff;padding:8px 14px;border-radius:10px;font-size:14px;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+#toast.on{opacity:.95}
+.detlist{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.dt{display:flex;flex-direction:column;align-items:center;width:62px;font-size:11px;text-align:center;gap:2px}
+.dt span:first-child{font-size:26px;width:46px;height:46px;border-radius:50%;background:var(--chip);display:grid;place-items:center;border:2px solid transparent}
+.dt.t span:first-child{border-color:var(--green);background:#dcfce7}
+.dt.hid{opacity:.45}
+details summary{cursor:pointer;font-weight:600;margin:8px 0}
+a{color:var(--green)}
+@media (min-width:900px){
+  #sheet{left:12px;top:calc(64px + var(--safe-t));bottom:12px;right:auto;width:400px;height:auto!important;border-radius:16px}
+  #grab{display:none}
+  #fabs,#legend{bottom:16px!important}
+  #legend{left:424px}
+  #top{left:12px}
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="top">
+  <button id="pick" class="pill"><span class="ico">🎯</span><span id="pickLabel">Choose a decor type</span> ▾</button>
+  <div id="status" class="pill" hidden></div>
+</div>
+<div id="fabs">
+  <button class="fab" id="btnLocate" title="Go to my location" aria-label="My location">◎</button>
+  <button class="fab" id="btnLive" title="Live detector: follow my GPS" aria-label="Live detector">📡</button>
+  <button class="fab" id="btnCells" title="Show cells" aria-label="Toggle cells">▦</button>
+  <button class="fab" id="btnHeat" title="Show isolation heatmap" aria-label="Toggle heatmap">◐</button>
+</div>
+<div id="legend"></div>
+<section id="sheet">
+  <div id="grab" title="Drag to resize"></div>
+  <nav id="tabs">
+    <button data-tab="spots" class="on">Spots</button>
+    <button data-tab="detector">Detector</button>
+    <button data-tab="calibrate">Calibrate</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="help">Help</button>
+  </nav>
+  <div class="panel on" id="p-spots"></div>
+  <div class="panel" id="p-detector"></div>
+  <div class="panel" id="p-calibrate"></div>
+  <div class="panel" id="p-settings"></div>
+  <div class="panel" id="p-help"></div>
+</section>
+<div id="picker"><div class="box">
+  <header><input id="pickSearch" placeholder="Search decor types…" autocomplete="off"><button class="btn" id="pickClose">Close</button></header>
+  <div id="pickList"></div>
+</div></div>
+<div id="toast"></div>
+<script>
+/* Pikmin Bloom Decor Finder — engine (pure logic, no DOM).
+ * Works in the browser (window.PBEngine) and in Node (module.exports) for tests.
+ */
+(function (root) {
+  'use strict';
+
+  const ENGINE_VERSION = '1.0.0';
+  const DEG = Math.PI / 180;
+  const R_EARTH = 6371008.8;
+  const M_PER_DEG_LAT = R_EARTH * DEG; // ~111195 m
+
+  // ---------------------------------------------------------------------------
+  // Decor categories → OSM tags  (source: Pikipedia "Decor Pikmin", Nov 2026)
+  //   kind 'point' : the POI marks the single cell it sits in
+  //   kind 'area'  : a polygon marks every cell it covers (rule set in options)
+  //   kind 'line'  : a line marks every cell it passes through (bridges)
+  // Edit this table if the community finds new/changed tags.
+  // ---------------------------------------------------------------------------
+  function cat(id, name, icon, kind, tags, extra) {
+    return Object.assign({
+      id, name, icon, kind,
+      tags: (tags || []).map((s) => s.split('=')),
+      cuisine: [],
+    }, extra || {});
+  }
+
+  const CATEGORIES = [
+    cat('restaurant', 'Restaurant', '🍽️', 'point', ['amenity=restaurant'], { generic: true }),
+    cat('cafe', 'Café', '☕', 'point', ['amenity=cafe']),
+    cat('sweetshop', 'Sweetshop', '🍩', 'point', ['shop=pastry']),
+    cat('cinema', 'Movie Theater', '🍿', 'point', ['amenity=cinema']),
+    cat('pharmacy', 'Pharmacy', '🪥', 'point', ['amenity=pharmacy']),
+    cat('zoo', 'Zoo', '🦁', 'area', ['tourism=zoo']),
+    cat('forest', 'Forest', '🌰', 'area', ['natural=wood', 'landuse=forest']),
+    cat('waterside', 'Waterside', '🎣', 'area', ['natural=water']),
+    cat('post_office', 'Post Office', '✉️', 'point', ['amenity=post_office']),
+    cat('art', 'Art Gallery', '🖼️', 'point', ['shop=art']),
+    cat('airport', 'Airport', '✈️', 'area', ['aeroway=aerodrome']),
+    cat('station', 'Station', '🚆', 'point', ['railway=station', 'building=train_station']),
+    cat('beach', 'Beach', '🐚', 'area', ['natural=beach']),
+    cat('burger', 'Burger Place', '🍔', 'point', ['amenity=fast_food'], { generic: true }),
+    cat('corner_store', 'Corner Store', '🏪', 'point', ['shop=convenience']),
+    cat('supermarket', 'Supermarket', '🍌', 'point', ['shop=supermarket']),
+    cat('bakery', 'Bakery', '🥖', 'point', ['shop=bakery']),
+    cat('hair_salon', 'Hair Salon', '✂️', 'point', ['shop=hairdresser']),
+    cat('clothes', 'Clothes Store', '👕', 'point', ['shop=clothes', 'shop=shoes']),
+    cat('park', 'Park', '🍀', 'area', ['leisure=park']),
+    cat('library', 'Library & Bookstore', '📚', 'point', ['amenity=library', 'shop=books']),
+    cat('sushi', 'Sushi Restaurant', '🍣', 'point', [], { cuisine: ['sushi'] }),
+    cat('mountain', 'Mountain', '⛰️', 'point', ['natural=peak']),
+    cat('stadium', 'Stadium', '⚽', 'area', ['leisure=stadium']),
+    cat('theme_park', 'Theme Park', '🎡', 'area', ['tourism=theme_park']),
+    cat('bus_stop', 'Bus Stop', '🚌', 'point', ['highway=bus_stop']),
+    cat('italian', 'Italian Restaurant', '🍕', 'point', [], { cuisine: ['pizza', 'mediterranean', 'italian'] }),
+    cat('ramen', 'Ramen Restaurant', '🍜', 'point', [], { cuisine: ['chinese', 'noodle', 'ramen', 'udon', 'soba'] }),
+    cat('bridge', 'Bridge', '🌉', 'line', ['bridge=yes']),
+    cat('hotel', 'Hotel', '🏨', 'point', ['tourism=hotel']),
+    cat('makeup', 'Makeup Store', '💄', 'point', ['shop=department_store']),
+    cat('shrine', 'Shrine & Temple (Japan)', '⛩️', 'point', ['amenity=place_of_worship'], { region: 'JP' }),
+    cat('appliances', 'Appliances Store', '🔋', 'point', ['shop=appliance', 'shop=computer', 'shop=electronics']),
+    cat('curry', 'Curry Restaurant', '🍛', 'point', [], { cuisine: ['curry', 'indian', 'sri_lankan'] }),
+    cat('diy', 'DIY Store', '🔧', 'point', ['shop=doityourself', 'shop=hardware']),
+    cat('university', 'University & College', '🎓', 'area', ['amenity=university', 'amenity=college']),
+    cat('mexican', 'Mexican Restaurant', '🌮', 'point', [], { cuisine: ['mexican'] }),
+    cat('laundry', 'Laundromat', '🧺', 'point', ['shop=laundry', 'shop=dry_cleaning']),
+    cat('korean', 'Korean Restaurant', '🥬', 'point', [], { cuisine: ['korean'] }),
+    cat('stationery', 'Stationery Store', '✏️', 'point', ['shop=stationery', 'shop=craft']),
+  ];
+  const CAT = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
+  CATEGORIES.forEach((c, i) => {
+    c.index = i;
+    c.hue = Math.round((i * 137.508) % 360); // golden-angle hues: distinct colours
+  });
+  const ROADSIDE = { id: 'roadside', name: 'Roadside', icon: '🏷️' };
+
+  const DEFAULT_OPTS = {
+    grid: 's2-17',        // cell model: s2-16 | s2-17 | s2-18 | ll-0.00036 | ll-0.00072
+    radius: 100,          // detector range in metres
+    areaRule: 'center',   // 'center' = cell centre inside polygon, 'overlap' = any part touches
+    cuisineMode: 'both',  // 'both' = sushi place also counts as Restaurant; 'specific' = cuisine wins
+    bridgeMode: 'named',  // 'named' | 'all' | 'off'
+    maxShown: 6,          // detector shows at most this many types (nearest first)
+  };
+
+  // ---------------------------------------------------------------------------
+  // Small geo helpers (local equirectangular — accurate to <0.1% over a few km)
+  // ---------------------------------------------------------------------------
+  function distM(lat1, lon1, lat2, lon2) {
+    const dy = (lat2 - lat1) * M_PER_DEG_LAT;
+    const dx = (lon2 - lon1) * M_PER_DEG_LAT * Math.cos(((lat1 + lat2) / 2) * DEG);
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function mPerDegLon(lat) { return M_PER_DEG_LAT * Math.cos(lat * DEG); }
+  function expandBBox(b, meters) {
+    const dLat = meters / M_PER_DEG_LAT;
+    const dLon = meters / mPerDegLon((b.s + b.n) / 2);
+    return { s: b.s - dLat, w: b.w - dLon, n: b.n + dLat, e: b.e + dLon };
+  }
+  function bboxContains(b, lat, lon) { return lat >= b.s && lat <= b.n && lon >= b.w && lon <= b.e; }
+  function bboxOverlap(a, b) { return a.s <= b.n && a.n >= b.s && a.w <= b.e && a.e >= b.w; }
+
+  function inJapan(lat, lon) {
+    if (lat >= 24 && lat < 30 && lon >= 122.9 && lon <= 131.5) return true;   // Ryukyu
+    if (lat >= 30 && lat < 34.75 && lon >= 128.5 && lon <= 132.2) return true; // Kyushu, Tsushima, Goto
+    if (lat >= 33.2 && lat <= 45.6 && lon >= 130.8 && lon <= 146.0) {          // Honshu–Hokkaido
+      if (lat > 42.3 && lon < 139.3) return false;                            // exclude Primorye
+      return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tag → category matching
+  // ---------------------------------------------------------------------------
+  function cuisineList(tags) {
+    const c = tags.cuisine;
+    if (!c) return [];
+    return String(c).toLowerCase().split(/[;,]/).map((s) => s.trim()).filter(Boolean);
+  }
+  function catMatches(c, tags, cuis) {
+    for (const [k, v] of c.tags) if (tags[k] === v) return true;
+    if (c.cuisine.length && cuis.length) for (const v of c.cuisine) if (cuis.includes(v)) return true;
+    return false;
+  }
+  /** role: 'point' | 'area' | 'line'; elType: 'node'|'way'|'relation' */
+  function catsFor(tags, elType, role, opts, lat, lon) {
+    if (!tags) return [];
+    const cuis = cuisineList(tags);
+    const out = [];
+    for (const c of CATEGORIES) {
+      if (role === 'point' && !(c.kind === 'point' || (c.kind === 'area' && elType === 'node'))) continue;
+      if (role === 'area' && c.kind !== 'area') continue;
+      if (role === 'line' && c.kind !== 'line') continue;
+      if (c.region === 'JP' && !inJapan(lat, lon)) continue;
+      if (c.id === 'bridge') {
+        if (opts.bridgeMode === 'off') continue;
+        if (opts.bridgeMode === 'named' && !(tags.name || tags['bridge:name'])) continue;
+      }
+      if (catMatches(c, tags, cuis)) out.push(c.id);
+    }
+    if (opts.cuisineMode === 'specific' && out.some((id) => CAT[id].cuisine.length)) {
+      return out.filter((id) => !CAT[id].generic);
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cell grids
+  // ---------------------------------------------------------------------------
+  // S2 (Google's sphere cells; Niantic uses them widely). Only geometry is
+  // needed, so cells are keyed by (face, i, j) instead of Hilbert cell ids.
+  function uvToST(u) { return u >= 0 ? 0.5 * Math.sqrt(1 + 3 * u) : 1 - 0.5 * Math.sqrt(1 - 3 * u); }
+  function stToUV(s) { return s >= 0.5 ? (1 / 3) * (4 * s * s - 1) : (1 / 3) * (1 - 4 * (1 - s) * (1 - s)); }
+  function latLngToFaceUV(lat, lon) {
+    const phi = lat * DEG, th = lon * DEG, cp = Math.cos(phi);
+    const x = cp * Math.cos(th), y = cp * Math.sin(th), z = Math.sin(phi);
+    const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+    let f;
+    if (ax >= ay && ax >= az) f = x < 0 ? 3 : 0;
+    else if (ay >= az) f = y < 0 ? 4 : 1;
+    else f = z < 0 ? 5 : 2;
+    let u, v;
+    switch (f) {
+      case 0: u = y / x; v = z / x; break;
+      case 1: u = -x / y; v = z / y; break;
+      case 2: u = -x / z; v = -y / z; break;
+      case 3: u = z / x; v = y / x; break;
+      case 4: u = z / y; v = -x / y; break;
+      default: u = -y / z; v = -x / z;
+    }
+    return [f, u, v];
+  }
+  function faceUVToLatLng(f, u, v) {
+    let x, y, z;
+    switch (f) {
+      case 0: x = 1; y = u; z = v; break;
+      case 1: x = -u; y = 1; z = v; break;
+      case 2: x = -u; y = -v; z = 1; break;
+      case 3: x = -1; y = -v; z = -u; break;
+      case 4: x = v; y = -1; z = -u; break;
+      default: x = v; y = u; z = -1;
+    }
+    const lat = Math.atan2(z, Math.sqrt(x * x + y * y)) / DEG;
+    const lon = Math.atan2(y, x) / DEG;
+    return [lat, lon];
+  }
+
+  const GRID_LABELS = {
+    's2-16': 'S2 level 16 (~150 m cells)',
+    's2-17': 'S2 level 17 (~75 m cells)',
+    's2-18': 'S2 level 18 (~38 m cells)',
+    'll-0.00036': 'Lat/lng grid 0.00036° (~40 m, flower grid)',
+    'll-0.00072': 'Lat/lng grid 0.00072° (~80 m)',
+  };
+
+  const gridCache = new Map();
+  function getGrid(id) {
+    if (gridCache.has(id)) return gridCache.get(id);
+    let g;
+    if (id.startsWith('s2-')) {
+      const L = parseInt(id.slice(3), 10);
+      const N = 2 ** L;
+      const edge = 9.22e6 / N; // average edge in metres
+      g = {
+        id, label: GRID_LABELS[id] || id, edge, step: edge * 0.22,
+        keyOf(lat, lon) {
+          const [f, u, v] = latLngToFaceUV(lat, lon);
+          let i = Math.floor(uvToST(u) * N), j = Math.floor(uvToST(v) * N);
+          if (i >= N) i = N - 1; if (i < 0) i = 0;
+          if (j >= N) j = N - 1; if (j < 0) j = 0;
+          return (f * N + i) * N + j;
+        },
+        _geom: new Map(),
+        cell(key) {
+          let c = this._geom.get(key);
+          if (c) return c;
+          const j = key % N, rest = (key - j) / N, i = rest % N, f = (rest - i) / N;
+          const pt = (s, t) => faceUVToLatLng(f, stToUV(s), stToUV(t));
+          const s0 = i / N, s1 = (i + 1) / N, t0 = j / N, t1 = (j + 1) / N;
+          const center = pt((i + 0.5) / N, (j + 0.5) / N);
+          const corners = [pt(s0, t0), pt(s1, t0), pt(s1, t1), pt(s0, t1)];
+          c = mkCell(key, center, corners);
+          this._geom.set(key, c);
+          return c;
+        },
+      };
+    } else if (id.startsWith('ll-')) {
+      const d = parseFloat(id.slice(3));
+      const OFF_I = 600000, OFF_J = 1100000, W = 2300000;
+      g = {
+        id, label: GRID_LABELS[id] || id, edge: d * M_PER_DEG_LAT, step: d * M_PER_DEG_LAT * 0.3,
+        keyOf(lat, lon) {
+          return (Math.floor(lat / d) + OFF_I) * W + (Math.floor(lon / d) + OFF_J);
+        },
+        _geom: new Map(),
+        cell(key) {
+          let c = this._geom.get(key);
+          if (c) return c;
+          const jj = key % W, ii = (key - jj) / W;
+          const i = ii - OFF_I, j = jj - OFF_J;
+          const s = i * d, w = j * d, n = s + d, e = w + d;
+          c = mkCell(key, [(s + n) / 2, (w + e) / 2], [[s, w], [s, e], [n, e], [n, w]]);
+          this._geom.set(key, c);
+          return c;
+        },
+      };
+    } else {
+      throw new Error('Unknown grid ' + id);
+    }
+    gridCache.set(id, g);
+    return g;
+  }
+  function mkCell(key, center, corners) {
+    let s = 90, n = -90, w = 180, e = -180;
+    for (const [la, lo] of corners) {
+      if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo;
+    }
+    return { key, lat: center[0], lon: center[1], corners, bbox: { s, w, n, e } };
+  }
+  /** All cell keys whose area intersects bbox (sampled lattice, robust across S2 faces). */
+  function cellsInBBox(grid, b) {
+    const keys = new Set();
+    const midLat = (b.s + b.n) / 2;
+    const dLat = grid.step / M_PER_DEG_LAT, dLon = grid.step / mPerDegLon(midLat);
+    for (let la = b.s; la <= b.n + dLat; la += dLat) {
+      const lat = Math.min(la, b.n);
+      for (let lo = b.w; lo <= b.e + dLon; lo += dLon) keys.add(grid.keyOf(lat, Math.min(lo, b.e)));
+    }
+    return keys;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Polygon tests
+  //   ray mode : complete geometry → even/odd ray cast (works on segment soup)
+  //   ref mode : clipped geometry → parity along segment from a reference point
+  //              whose inside/outside state Overpass told us (is_in)
+  //   cover    : polygon encloses the whole tile
+  // segs are flat arrays [lat1, lon1, lat2, lon2, ...]
+  // ---------------------------------------------------------------------------
+  function rayInside(segs, lat, lon) {
+    let inside = false;
+    for (let k = 0; k < segs.length; k += 4) {
+      const y1 = segs[k], x1 = segs[k + 1], y2 = segs[k + 2], x2 = segs[k + 3];
+      if ((y1 > lat) !== (y2 > lat)) {
+        const xi = x1 + ((lat - y1) * (x2 - x1)) / (y2 - y1);
+        if (xi > lon) inside = !inside;
+      }
+    }
+    return inside;
+  }
+  function segCross(ay, ax, by, bx, cy, cx, dy, dx) {
+    const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+    const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+    const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+    return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+  }
+  function refInsideTest(area, lat, lon) {
+    const [ry, rx] = area.ref;
+    let inside = area.refInside;
+    const s = area.segs;
+    for (let k = 0; k < s.length; k += 4) {
+      if (segCross(ry, rx, lat, lon, s[k], s[k + 1], s[k + 2], s[k + 3])) inside = !inside;
+    }
+    return inside;
+  }
+  function segsBBox(segs) {
+    let s = 90, n = -90, w = 180, e = -180;
+    for (let k = 0; k < segs.length; k += 2) {
+      const la = segs[k], lo = segs[k + 1];
+      if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo;
+    }
+    return { s, w, n, e };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Overpass query + parse (one query per tile; all categories at once)
+  // ---------------------------------------------------------------------------
+  const TILE_DEG = 0.01;     // ~1.1 km tiles
+  const TILE_PAD_DEG = 0.0025; // ~250 m of extra data around each tile
+  const BIG_REL_M = 25000;   // relations longer than this come back clipped
+
+  function tileKeyFor(lat, lon) { return Math.floor(lat / TILE_DEG) + '_' + Math.floor(lon / TILE_DEG); }
+  function tileInfo(key) {
+    const [a, b] = key.split('_').map(Number);
+    const bbox = { s: a * TILE_DEG, w: b * TILE_DEG, n: (a + 1) * TILE_DEG, e: (b + 1) * TILE_DEG };
+    const pbox = { s: bbox.s - TILE_PAD_DEG, w: bbox.w - TILE_PAD_DEG, n: bbox.n + TILE_PAD_DEG, e: bbox.e + TILE_PAD_DEG };
+    return { key, bbox, pbox, center: [(bbox.s + bbox.n) / 2, (bbox.w + bbox.e) / 2] };
+  }
+  function tilesForBBox(b) {
+    const keys = [];
+    for (let a = Math.floor(b.s / TILE_DEG); a <= Math.floor(b.n / TILE_DEG); a++) {
+      for (let c = Math.floor(b.w / TILE_DEG); c <= Math.floor(b.e / TILE_DEG); c++) keys.push(a + '_' + c);
+    }
+    return keys;
+  }
+
+  function groupTags(kinds, includeRegionJP) {
+    const g = {};
+    for (const c of CATEGORIES) {
+      if (!kinds.includes(c.kind)) continue;
+      if (c.region === 'JP' && !includeRegionJP) continue;
+      for (const [k, v] of c.tags) (g[k] = g[k] || new Set()).add(v);
+    }
+    return g;
+  }
+  const esc = (s) => s.replace(/[\\"]/g, '\\$&');
+  function sel(type, key, vals, bb) {
+    const arr = [...vals];
+    if (arr.length === 1) return `${type}["${key}"="${esc(arr[0])}"](${bb});`;
+    return `${type}["${key}"~"^(${arr.map(esc).join('|')})$"](${bb});`;
+  }
+
+  /**
+   * Build the Overpass QL for one tile. Output is split into sections, each
+   * introduced by an `out count;` element, so the parser knows what follows.
+   * variant: 'full' (length() split + is_in) | 'safe' (no length()) | 'minimal' (no is_in)
+   */
+  function buildQuery(tileKey, opts) {
+    const o = Object.assign({ date: '', variant: 'full' }, opts || {});
+    const t = tileInfo(tileKey);
+    const p = t.pbox;
+    const bb = [p.s, p.w, p.n, p.e].map((x) => x.toFixed(6)).join(',');
+    const jp = inJapan(t.center[0], t.center[1]);
+    const pointTags = groupTags(['point'], jp);
+    const areaTags = groupTags(['area'], jp);
+    const cuisines = [...new Set(CATEGORIES.flatMap((c) => c.cuisine))];
+    const L = [];
+    const dateClause = o.date ? `[date:"${esc(o.date)}T00:00:00Z"]` : '';
+    L.push(`[out:json][timeout:90]${dateClause};`);
+    const sections = [];
+    // 1) points: POIs of point categories (any element, centre) + area categories as nodes
+    L.push('(');
+    for (const k of Object.keys(pointTags)) L.push(sel('nwr', k, pointTags[k], bb));
+    for (const k of Object.keys(areaTags)) L.push(sel('node', k, areaTags[k], bb));
+    L.push(`nwr["cuisine"~"${cuisines.join('|')}",i](${bb});`);
+    L.push(')->.p;', '.p out count;', '.p out tags center qt;');
+    sections.push('points');
+    // 2) area ways, full geometry
+    L.push('(');
+    for (const k of Object.keys(areaTags)) L.push(sel('way', k, areaTags[k], bb));
+    L.push(')->.aw;', '.aw out count;', '.aw out geom qt;');
+    sections.push('areaWays');
+    // 3) area relations — small ones full, big ones clipped to the tile
+    L.push('(');
+    for (const k of Object.keys(areaTags)) L.push(sel('relation', k, areaTags[k], bb));
+    L.push(')->.ar;');
+    if (o.variant === 'full') {
+      L.push(`relation.ar(if:length()<${BIG_REL_M})->.rs;`, '(.ar; - .rs;)->.rb;');
+      L.push('.rs out count;', '.rs out geom qt;');
+      sections.push('relFull');
+      L.push('.rb out count;', `.rb out geom(${bb}) qt;`);
+      sections.push('relClipped');
+    } else {
+      L.push('.ar out count;', `.ar out geom(${bb}) qt;`);
+      sections.push('relClipped');
+    }
+    // 4) bridges (lines, clipped)
+    L.push(`way["bridge"="yes"](${bb})->.br;`, '.br out count;', `.br out tags geom(${bb}) qt;`);
+    sections.push('bridges');
+    // 5) which big areas contain the tile centre (reference for clipped relations)
+    if (o.variant !== 'minimal' && !o.date) {
+      const [cl, cn] = t.center.map((x) => x.toFixed(6));
+      L.push(`is_in(${cl},${cn})->.ins;`, '(');
+      for (const k of Object.keys(areaTags)) L.push(sel('area.ins', k, areaTags[k], '').replace('()', ''));
+      L.push(')->.ia;', '.ia out count;', '.ia out tags;');
+      sections.push('isIn');
+    }
+    return { query: L.join('\n'), sections, tile: t };
+  }
+
+  /** clipBox: for clipped output, drop segments with both ends outside the box —
+   *  Overpass may omit the off-box nodes, which would otherwise create false chords. */
+  function geomToSegs(geom, segs, clipBox) {
+    if (!geom) return;
+    for (let k = 1; k < geom.length; k++) {
+      const a = geom[k - 1], b = geom[k];
+      if (!a || !b || a.lat == null || b.lat == null) continue;
+      if (clipBox && !bboxContains(clipBox, a.lat, a.lon) && !bboxContains(clipBox, b.lat, b.lon)) continue;
+      segs.push(a.lat, a.lon, b.lat, b.lon);
+    }
+  }
+
+  /** Turn an Overpass JSON response into a compact, cacheable tile record. */
+  function parseTile(json, built) {
+    const t = built.tile;
+    const out = {
+      key: t.key, bbox: t.bbox, pbox: t.pbox, center: t.center,
+      points: [], areas: [], lines: [], covers: [], fetched: Date.now(),
+    };
+    if (!json || !Array.isArray(json.elements)) throw new Error('Unexpected Overpass response');
+    if (json.remark && /error/i.test(json.remark)) throw new Error('Overpass: ' + json.remark);
+    let si = -1;
+    const insideIds = new Map(); // area id -> tags
+    const seenAreaIds = new Set();
+    const relClipped = [];
+    for (const el of json.elements) {
+      if (el.type === 'count') { si++; continue; }
+      const section = built.sections[si];
+      if (section === 'points') {
+        const lat = el.lat != null ? el.lat : el.center && el.center.lat;
+        const lon = el.lon != null ? el.lon : el.center && el.center.lon;
+        if (lat == null) continue;
+        out.points.push({ id: el.type[0] + el.id, et: el.type, lat, lon, tags: el.tags || {} });
+      } else if (section === 'areaWays') {
+        const segs = [];
+        geomToSegs(el.geometry, segs);
+        if (segs.length < 12) continue;
+        // close the ring if Overpass returned an unclosed way
+        const g = el.geometry, a = g[0], b = g[g.length - 1];
+        if (a && b && (a.lat !== b.lat || a.lon !== b.lon)) segs.push(b.lat, b.lon, a.lat, a.lon);
+        out.areas.push({ id: 'w' + el.id, et: 'way', mode: 'ray', tags: el.tags || {}, segs });
+        seenAreaIds.add(2400000000 + el.id);
+      } else if (section === 'relFull' || section === 'relClipped') {
+        const segs = [];
+        for (const m of el.members || []) if (m.type === 'way') geomToSegs(m.geometry, segs, section === 'relClipped' ? t.pbox : null);
+        seenAreaIds.add(3600000000 + el.id);
+        if (!segs.length) continue;
+        const rec = { id: 'r' + el.id, et: 'relation', mode: section === 'relFull' ? 'ray' : 'ref', tags: el.tags || {}, segs };
+        out.areas.push(rec);
+        if (rec.mode === 'ref') relClipped.push([rec, el.id]);
+      } else if (section === 'bridges') {
+        const segs = [];
+        geomToSegs(el.geometry, segs, t.pbox);
+        if (segs.length) out.lines.push({ id: 'w' + el.id, et: 'way', tags: el.tags || {}, segs });
+      } else if (section === 'isIn') {
+        insideIds.set(el.id, el.tags || {});
+      }
+    }
+    const hasIsIn = built.sections.includes('isIn');
+    for (const [rec, id] of relClipped) {
+      if (hasIsIn) {
+        rec.ref = t.center;
+        rec.refInside = insideIds.has(3600000000 + id);
+      } else {
+        rec.mode = 'ray'; // best effort without a reference point
+      }
+    }
+    // areas that contain the whole tile but have no edges near it
+    for (const [aid, tags] of insideIds) {
+      if (seenAreaIds.has(aid)) continue;
+      const id = aid >= 3600000000 ? 'r' + (aid - 3600000000) : 'w' + (aid - 2400000000);
+      out.covers.push({ id, et: aid >= 3600000000 ? 'relation' : 'way', tags });
+    }
+    for (const a of out.areas) a.bbox = segsBBox(a.segs);
+    for (const l of out.lines) l.bbox = segsBBox(l.segs);
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feature store: merges cached tiles
+  // ---------------------------------------------------------------------------
+  class FeatureStore {
+    constructor() { this.tiles = new Map(); this.version = 0; this._idx = null; }
+    addTile(tile) { this.tiles.set(tile.key, tile); this.version++; this._idx = null; }
+    has(key) { return this.tiles.has(key); }
+    clear() { this.tiles.clear(); this.version++; this._idx = null; }
+    tileAt(lat, lon) { return this.tiles.get(tileKeyFor(lat, lon)); }
+    index() {
+      if (this._idx) return this._idx;
+      const points = new Map(), rayAreas = new Map(), lines = new Map();
+      for (const t of this.tiles.values()) {
+        for (const p of t.points) if (!points.has(p.id)) points.set(p.id, p);
+        for (const a of t.areas) if (a.mode === 'ray' && !rayAreas.has(a.id)) rayAreas.set(a.id, a);
+        for (const l of t.lines) lines.set(l.id + '@' + t.key, l);
+      }
+      // bucket points (~0.002° buckets)
+      const B = 0.002, pb = new Map();
+      for (const p of points.values()) {
+        const k = Math.floor(p.lat / B) + ':' + Math.floor(p.lon / B);
+        let arr = pb.get(k); if (!arr) pb.set(k, (arr = [])); arr.push(p);
+      }
+      this._idx = { points: [...points.values()], pointBuckets: pb, B, rayAreas: [...rayAreas.values()], lines: [...lines.values()] };
+      return this._idx;
+    }
+    pointsIn(b) {
+      const idx = this.index(), out = [], B = idx.B;
+      for (let a = Math.floor(b.s / B); a <= Math.floor(b.n / B); a++) {
+        for (let c = Math.floor(b.w / B); c <= Math.floor(b.e / B); c++) {
+          const arr = idx.pointBuckets.get(a + ':' + c);
+          if (arr) for (const p of arr) if (bboxContains(b, p.lat, p.lon)) out.push(p);
+        }
+      }
+      return out;
+    }
+    /** Area features (with categories already resolved) containing the point. */
+    areasAt(lat, lon, catsOf) {
+      const res = [];
+      for (const a of this.index().rayAreas) {
+        if (!bboxContains(a.bbox, lat, lon)) continue;
+        if (!catsOf(a).length) continue;
+        if (rayInside(a.segs, lat, lon)) res.push(a);
+      }
+      const t = this.tileAt(lat, lon);
+      if (t) {
+        for (const a of t.areas) {
+          if (a.mode !== 'ref' || !catsOf(a).length) continue;
+          if (refInsideTest(a, lat, lon)) res.push(a);
+        }
+        for (const c of t.covers) if (catsOf(c).length) res.push(c);
+      }
+      return res;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cell index: which decor categories each cell carries
+  // ---------------------------------------------------------------------------
+  function featureName(f) {
+    const t = f.tags || {};
+    return t.name || t['name:en'] || t.brand || t.operator || t['bridge:name'] || '';
+  }
+
+  /**
+   * Build typed cells covering bbox for the given options.
+   * Returns { grid, cells: Map(key → {key,lat,lon,corners,cats:[],src:[{cat,name,id}]}), lookup }
+   */
+  function buildCellIndex(store, bbox, opts) {
+    opts = Object.assign({}, DEFAULT_OPTS, opts || {});
+    const grid = getGrid(opts.grid);
+    const typed = new Map();
+    const catCache = new Map();
+    const catsOf = (f, role) => {
+      const ck = f.id + '|' + role;
+      let r = catCache.get(ck);
+      if (!r) {
+        const la = f.lat != null ? f.lat : (f.bbox ? (f.bbox.s + f.bbox.n) / 2 : 0);
+        const lo = f.lon != null ? f.lon : (f.bbox ? (f.bbox.w + f.bbox.e) / 2 : 0);
+        r = catsFor(f.tags, f.et, role, opts, la, lo);
+        catCache.set(ck, r);
+      }
+      return r;
+    };
+    const add = (key, cats, f) => {
+      let c = typed.get(key);
+      if (!c) {
+        const g = grid.cell(key);
+        c = { key, lat: g.lat, lon: g.lon, corners: g.corners, bbox: g.bbox, cats: [], src: [] };
+        typed.set(key, c);
+      }
+      for (const id of cats) {
+        if (!c.cats.includes(id)) c.cats.push(id);
+        if (c.src.length < 40) c.src.push({ cat: id, name: featureName(f), id: f.id });
+      }
+    };
+    const frame = expandBBox(bbox, grid.edge);
+    // points
+    for (const p of store.pointsIn(frame)) {
+      const cats = catsOf(p, 'point');
+      if (cats.length) add(grid.keyOf(p.lat, p.lon), cats, p);
+    }
+    // lines (bridges): sample along each segment
+    if (opts.bridgeMode !== 'off') {
+      const stepDeg = grid.step / M_PER_DEG_LAT;
+      for (const l of store.index().lines) {
+        if (!bboxOverlap(l.bbox, frame)) continue;
+        const cats = catsOf(l, 'line');
+        if (!cats.length) continue;
+        const s = l.segs;
+        for (let k = 0; k < s.length; k += 4) {
+          const len = Math.hypot(s[k + 2] - s[k], s[k + 3] - s[k + 1]);
+          const n = Math.max(1, Math.ceil(len / stepDeg));
+          for (let q = 0; q <= n; q++) {
+            const la = s[k] + ((s[k + 2] - s[k]) * q) / n, lo = s[k + 1] + ((s[k + 3] - s[k + 1]) * q) / n;
+            if (bboxContains(frame, la, lo)) add(grid.keyOf(la, lo), cats, l);
+          }
+        }
+      }
+    }
+    // areas: test every cell in the frame
+    const areaCats = (a) => catsOf(a, 'area');
+    const keys = cellsInBBox(grid, frame);
+    for (const key of keys) {
+      const g = grid.cell(key);
+      const probes = opts.areaRule === 'overlap'
+        ? [[g.lat, g.lon], ...g.corners, ...g.corners.map((p, i) => {
+          const q = g.corners[(i + 1) % 4]; return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+        })]
+        : [[g.lat, g.lon]];
+      const hit = new Map();
+      for (const [la, lo] of probes) {
+        for (const a of store.areasAt(la, lo, areaCats)) hit.set(a.id, a);
+      }
+      if (opts.areaRule === 'overlap') {
+        // small polygons entirely inside the cell
+        for (const a of store.index().rayAreas) {
+          if (hit.has(a.id) || !bboxOverlap(a.bbox, g.bbox) || !areaCats(a).length) continue;
+          if (grid.keyOf(a.segs[0], a.segs[1]) === key) hit.set(a.id, a);
+        }
+      }
+      for (const a of hit.values()) add(key, areaCats(a), a);
+    }
+    // spatial lookup for detector queries
+    const lookup = makeLookup(typed, (bbox.s + bbox.n) / 2, opts.radius);
+    return { grid, opts, bbox, cells: typed, lookup };
+  }
+
+  function makeLookup(typed, lat0, radius) {
+    const dLat = radius / M_PER_DEG_LAT, dLon = radius / mPerDegLon(lat0);
+    const buckets = new Map();
+    for (const c of typed.values()) {
+      if (!c.cats.length) continue;
+      const k = Math.floor(c.lat / dLat) + ':' + Math.floor(c.lon / dLon);
+      let arr = buckets.get(k); if (!arr) buckets.set(k, (arr = [])); arr.push(c);
+    }
+    return {
+      dLat, dLon,
+      near(lat, lon) {
+        const a = Math.floor(lat / dLat), b = Math.floor(lon / dLon), res = [];
+        for (let i = a - 1; i <= a + 1; i++) for (let j = b - 1; j <= b + 1; j++) {
+          const arr = buckets.get(i + ':' + j); if (arr) for (const c of arr) res.push(c);
+        }
+        return res;
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Detector simulation
+  // ---------------------------------------------------------------------------
+  /** Predict the detector list at (lat, lon). */
+  function detect(cellIndex, lat, lon) {
+    const { radius, maxShown } = cellIndex.opts;
+    const inRange = [];
+    for (const c of cellIndex.lookup.near(lat, lon)) {
+      const d = distM(lat, lon, c.lat, c.lon);
+      if (d <= radius) inRange.push({ cell: c, d });
+    }
+    inRange.sort((a, b) => a.d - b.d);
+    const order = [], counts = {};
+    for (const { cell } of inRange) {
+      for (const id of cell.cats) {
+        counts[id] = (counts[id] || 0) + 1;
+        if (!order.includes(id)) order.push(id);
+      }
+    }
+    const shown = order.slice(0, maxShown);
+    const hidden = order.slice(maxShown);
+    return { inRange, shown, hidden, counts, roadside: shown.length === 0 };
+  }
+
+  /**
+   * Isolation raster for a target category over bbox.
+   * val[k]: -1 target not detectable; otherwise number of OTHER types shown.
+   */
+  function isolationGrid(cellIndex, bbox, target, maxSamples) {
+    maxSamples = maxSamples || 90000;
+    const { radius, maxShown } = cellIndex.opts;
+    const midLat = (bbox.s + bbox.n) / 2;
+    const wM = (bbox.e - bbox.w) * mPerDegLon(midLat), hM = (bbox.n - bbox.s) * M_PER_DEG_LAT;
+    const step = Math.max(3, Math.sqrt((wM * hM) / maxSamples));
+    const cols = Math.max(1, Math.ceil(wM / step)), rows = Math.max(1, Math.ceil(hM / step));
+    const dLat = (bbox.n - bbox.s) / rows, dLon = (bbox.e - bbox.w) / cols;
+    const val = new Int8Array(cols * rows), tcount = new Uint8Array(cols * rows);
+    const r2 = radius * radius;
+    const ky = M_PER_DEG_LAT, kx = mPerDegLon(midLat);
+    for (let r = 0; r < rows; r++) {
+      const lat = bbox.n - (r + 0.5) * dLat;   // row 0 = north
+      for (let c = 0; c < cols; c++) {
+        const lon = bbox.w + (c + 0.5) * dLon;
+        const near = cellIndex.lookup.near(lat, lon);
+        let list = null, union = 0, tc = 0, hasT = false;
+        const seen = new Set();
+        for (const cell of near) {
+          const dy = (cell.lat - lat) * ky, dx = (cell.lon - lon) * kx;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > r2) continue;
+          (list || (list = [])).push([d2, cell]);
+          for (const id of cell.cats) {
+            if (id === target) { tc++; hasT = true; }
+            if (!seen.has(id)) { seen.add(id); union++; }
+          }
+        }
+        const k = r * cols + c;
+        tcount[k] = Math.min(255, tc);
+        if (!hasT) { val[k] = -1; continue; }
+        if (union <= maxShown) { val[k] = Math.min(127, union - 1); continue; }
+        // more types than the detector shows: nearest-first cut-off
+        list.sort((a, b) => a[0] - b[0]);
+        const order = [];
+        for (const [, cell] of list) for (const id of cell.cats) {
+          if (!order.includes(id)) order.push(id);
+        }
+        const shown = order.slice(0, maxShown);
+        val[k] = shown.includes(target) ? maxShown - 1 : -1;
+      }
+    }
+    return { bbox, cols, rows, step, dLat, dLon, val, tcount, target };
+  }
+
+  /** Connected regions of samples matching pred, best (deepest) point of each. */
+  function findRegions(ig, pred, limit) {
+    const { cols, rows, val } = ig;
+    const N = cols * rows;
+    const inSet = new Uint8Array(N);
+    for (let k = 0; k < N; k++) if (pred(val[k])) inSet[k] = 1;
+    // distance (in samples, chessboard) to the nearest sample NOT in the set
+    const dist = new Int32Array(N).fill(-1);
+    const q = new Int32Array(N);
+    let qh = 0, qt = 0;
+    for (let k = 0; k < N; k++) {
+      const r = (k / cols) | 0, c = k % cols;
+      if (!inSet[k]) { dist[k] = 0; q[qt++] = k; } else if (r === 0 || c === 0 || r === rows - 1 || c === cols - 1) {
+        dist[k] = 1; q[qt++] = k; // view edge: unknown beyond → treat as boundary
+      }
+    }
+    while (qh < qt) {
+      const k = q[qh++], r = (k / cols) | 0, c = k % cols;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
+        const kk = rr * cols + cc;
+        if (dist[kk] === -1) { dist[kk] = dist[k] + 1; q[qt++] = kk; }
+      }
+    }
+    // components
+    const comp = new Int32Array(N).fill(-1);
+    const regions = [];
+    for (let k0 = 0; k0 < N; k0++) {
+      if (!inSet[k0] || comp[k0] !== -1) continue;
+      const id = regions.length;
+      let n = 0, best = k0, sumT = 0;
+      const stack = [k0]; comp[k0] = id;
+      while (stack.length) {
+        const k = stack.pop(); n++; sumT += ig.tcount[k];
+        if (dist[k] > dist[best] || (dist[k] === dist[best] && ig.tcount[k] > ig.tcount[best])) best = k;
+        const r = (k / cols) | 0, c = k % cols;
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const rr = r + dr, cc = c + dc;
+          if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
+          const kk = rr * cols + cc;
+          if (inSet[kk] && comp[kk] === -1) { comp[kk] = id; stack.push(kk); }
+        }
+      }
+      const r = (best / cols) | 0, c = best % cols;
+      regions.push({
+        lat: ig.bbox.n - (r + 0.5) * ig.dLat,
+        lon: ig.bbox.w + (c + 0.5) * ig.dLon,
+        safe: Math.max(0, (dist[best] - 0.5) * ig.step),
+        area: n * ig.step * ig.step,
+        others: val[best],
+        targetCells: ig.tcount[best],
+        samples: n,
+      });
+    }
+    regions.sort((a, b) => b.safe - a.safe || b.area - a.area);
+    return limit ? regions.slice(0, limit) : regions;
+  }
+
+  /** Ranked spot list: pure spots first, then the fewest-overlap spots. */
+  function rankSpots(cellIndex, ig, limit) {
+    limit = limit || 12;
+    const spots = [];
+    const levels = [0, 1, 2, 3, 4, 5];
+    for (const lv of levels) {
+      if (spots.length >= limit) break;
+      const regs = findRegions(ig, (v) => v === lv, limit - spots.length);
+      for (const r of regs) {
+        if (r.samples < 2) continue;
+        const det = detect(cellIndex, r.lat, r.lon);
+        spots.push(Object.assign(r, { level: lv, detector: det.shown, otherCats: det.shown.filter((x) => x !== ig.target) }));
+      }
+      if (lv === 0 && spots.length >= 3) break; // enough pure spots: don't pad with impure ones
+    }
+    return spots;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Calibration: compare logged detector readings with model variants
+  // ---------------------------------------------------------------------------
+  function modelVariants(base) {
+    const grids = Object.keys(GRID_LABELS);
+    const out = [];
+    for (const grid of grids) for (const areaRule of ['center', 'overlap'])
+      for (const cuisineMode of ['both', 'specific']) for (const bridgeMode of ['named', 'all', 'off']) {
+        out.push(Object.assign({}, base, { grid, areaRule, cuisineMode, bridgeMode }));
+      }
+    return out;
+  }
+  function describeModel(o) {
+    return `${GRID_LABELS[o.grid] || o.grid}; areas: ${o.areaRule === 'center' ? 'cell centre inside' : 'any overlap'}; ` +
+      `cuisine: ${o.cuisineMode === 'both' ? 'also counts as Restaurant' : 'replaces Restaurant'}; bridges: ${o.bridgeMode}`;
+  }
+  function predictAt(store, lat, lon, opts) {
+    const o = Object.assign({}, DEFAULT_OPTS, opts);
+    const g = getGrid(o.grid);
+    const b = expandBBox({ s: lat, n: lat, w: lon, e: lon }, o.radius + g.edge);
+    const idx = buildCellIndex(store, b, o);
+    const d = detect(idx, lat, lon);
+    return d.roadside ? ['roadside'] : d.shown;
+  }
+  function scoreReading(pred, obs) {
+    const P = new Set(pred), O = new Set(obs);
+    let inter = 0;
+    for (const x of P) if (O.has(x)) inter++;
+    const uni = new Set([...P, ...O]).size;
+    return { jaccard: uni ? inter / uni : 1, exact: inter === P.size && inter === O.size, missing: [...O].filter((x) => !P.has(x)), extra: [...P].filter((x) => !O.has(x)) };
+  }
+  function evaluateModels(store, readings, variants) {
+    const res = [];
+    for (const v of variants) {
+      let sum = 0, exact = 0;
+      const details = [];
+      for (const r of readings) {
+        const pred = predictAt(store, r.lat, r.lon, v);
+        const s = scoreReading(pred, r.observed);
+        sum += s.jaccard; if (s.exact) exact++;
+        details.push({ id: r.id, pred, missing: s.missing, extra: s.extra });
+      }
+      res.push({ opts: v, label: describeModel(v), score: readings.length ? sum / readings.length : 0, exact, n: readings.length, details });
+    }
+    res.sort((a, b) => b.score - a.score || b.exact - a.exact);
+    return res;
+  }
+
+  const api = {
+    ENGINE_VERSION, CATEGORIES, CAT, ROADSIDE, DEFAULT_OPTS, GRID_LABELS,
+    distM, expandBBox, bboxContains, inJapan, catsFor, cuisineList,
+    getGrid, cellsInBBox, latLngToFaceUV, faceUVToLatLng, uvToST, stToUV,
+    rayInside, refInsideTest, segCross,
+    TILE_DEG, tileKeyFor, tileInfo, tilesForBBox, buildQuery, parseTile,
+    FeatureStore, buildCellIndex, detect, isolationGrid, findRegions, rankSpots,
+    modelVariants, describeModel, predictAt, scoreReading, evaluateModels,
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.PBEngine = api;
+})(typeof self !== 'undefined' ? self : this);
+
+</script>
+<script>
+/* Tiny dependency-free slippy map (canvas). Pan, wheel/pinch/double-tap zoom,
+ * raster tiles with parent-tile fallback, and overlay draw callbacks. */
+(function (root) {
+  'use strict';
+  const TS = 256;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  class SlippyMap {
+    constructor(el, o) {
+      this.el = el;
+      this.lat = o.lat; this.lon = o.lon; this.zoom = o.zoom;
+      this.minZoom = o.minZoom || 3; this.maxZoom = o.maxZoom || 20; this.maxNative = o.maxNative || 19;
+      this.tileUrl = o.tileUrl; this.subdomains = o.subdomains || ['a', 'b', 'c'];
+      this.layers = []; this.handlers = {};
+      this.tiles = new Map(); this.tileOrder = [];
+      this.canvas = document.createElement('canvas');
+      this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block';
+      el.appendChild(this.canvas);
+      this.ctx = this.canvas.getContext('2d');
+      this.pointers = new Map();
+      this._bind();
+      this.resize();
+      if (root.ResizeObserver) new ResizeObserver(() => this.resize()).observe(el);
+      else root.addEventListener('resize', () => this.resize());
+    }
+    on(t, fn) { (this.handlers[t] = this.handlers[t] || []).push(fn); }
+    emit(t, e) { (this.handlers[t] || []).forEach((fn) => fn(e)); }
+    setTileUrl(url, subdomains) { this.tileUrl = url; if (subdomains) this.subdomains = subdomains; this.tiles.clear(); this.tileOrder = []; this.redraw(); }
+
+    // ---- projection -------------------------------------------------------
+    worldSize(z) { return TS * Math.pow(2, z == null ? this.zoom : z); }
+    project(lat, lon, z) {
+      const s = this.worldSize(z), sin = Math.sin(clamp(lat, -85.0511, 85.0511) * Math.PI / 180);
+      return [((lon + 180) / 360) * s, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * s];
+    }
+    unproject(x, y, z) {
+      const s = this.worldSize(z);
+      const lon = (x / s) * 360 - 180;
+      const n = Math.PI - (2 * Math.PI * y) / s;
+      return [(180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))), lon];
+    }
+    toScreen(lat, lon) {
+      const [cx, cy] = this.project(this.lat, this.lon), [x, y] = this.project(lat, lon);
+      return [x - cx + this.w / 2, y - cy + this.h / 2];
+    }
+    toLatLng(sx, sy) {
+      const [cx, cy] = this.project(this.lat, this.lon);
+      return this.unproject(cx + sx - this.w / 2, cy + sy - this.h / 2);
+    }
+    metersPerPixel(lat) { return (156543.03392 * Math.cos((lat == null ? this.lat : lat) * Math.PI / 180)) / Math.pow(2, this.zoom); }
+    getBounds() {
+      const [n, w] = this.toLatLng(0, 0), [s, e] = this.toLatLng(this.w, this.h);
+      return { s, w, n, e };
+    }
+    setView(lat, lon, zoom, silent) {
+      this.lat = clamp(lat, -85, 85); this.lon = ((lon + 540) % 360) - 180;
+      if (zoom != null) this.zoom = clamp(zoom, this.minZoom, this.maxZoom);
+      this.redraw(); if (!silent) this._moveEnd();
+    }
+    zoomAround(sx, sy, newZoom) {
+      newZoom = clamp(newZoom, this.minZoom, this.maxZoom);
+      const [lat, lon] = this.toLatLng(sx, sy);
+      this.zoom = newZoom;
+      const [px, py] = this.project(lat, lon);
+      const [clat, clon] = this.unproject(px - (sx - this.w / 2), py - (sy - this.h / 2));
+      this.lat = clamp(clat, -85, 85); this.lon = clon;
+      this.redraw();
+    }
+    animateTo(lat, lon, zoom) {
+      const a = { lat: this.lat, lon: this.lon, z: this.zoom }, b = { lat, lon, z: zoom == null ? this.zoom : zoom };
+      const t0 = performance.now(), dur = 350;
+      const step = (t) => {
+        const k = Math.min(1, (t - t0) / dur), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        this.lat = a.lat + (b.lat - a.lat) * e; this.lon = a.lon + (b.lon - a.lon) * e; this.zoom = a.z + (b.z - a.z) * e;
+        this.redraw();
+        if (k < 1) requestAnimationFrame(step); else this._moveEnd();
+      };
+      requestAnimationFrame(step);
+    }
+
+    // ---- events ----------------------------------------------------------
+    _moveEnd() { clearTimeout(this._meT); this._meT = setTimeout(() => this.emit('moveend', this), 120); }
+    _bind() {
+      const c = this.canvas;
+      c.addEventListener('pointerdown', (e) => {
+        c.setPointerCapture(e.pointerId);
+        this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+        if (this.pointers.size === 1) {
+          this.drag = { x: e.offsetX, y: e.offsetY, c: this.project(this.lat, this.lon), moved: 0, t: performance.now() };
+        } else if (this.pointers.size === 2) {
+          const [p, q] = [...this.pointers.values()];
+          this.pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), z: this.zoom };
+          if (this.drag) this.drag.moved = 99;
+        }
+      });
+      c.addEventListener('pointermove', (e) => {
+        if (!this.pointers.has(e.pointerId)) return;
+        this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+        if (this.pointers.size === 2 && this.pinch) {
+          const [p, q] = [...this.pointers.values()];
+          const d = Math.hypot(p.x - q.x, p.y - q.y);
+          this.zoomAround((p.x + q.x) / 2, (p.y + q.y) / 2, this.pinch.z + Math.log2(d / this.pinch.d));
+          this.pinch = { d, z: this.zoom };
+        } else if (this.drag && this.pointers.size === 1) {
+          const dx = e.offsetX - this.drag.x, dy = e.offsetY - this.drag.y;
+          this.drag.moved = Math.max(this.drag.moved, Math.hypot(dx, dy));
+          if (this.drag.moved > 4) {
+            const [lat, lon] = this.unproject(this.drag.c[0] - dx, this.drag.c[1] - dy);
+            this.lat = clamp(lat, -85, 85); this.lon = lon; this.redraw();
+          }
+        }
+      });
+      const up = (e) => {
+        if (!this.pointers.has(e.pointerId)) return;
+        this.pointers.delete(e.pointerId);
+        if (this.pointers.size < 2) this.pinch = null;
+        if (this.pointers.size === 0 && this.drag) {
+          const d = this.drag; this.drag = null;
+          if (d.moved <= 4 && performance.now() - d.t < 600) {
+            const now = performance.now();
+            if (this._lastTap && now - this._lastTap.t < 300 && Math.hypot(this._lastTap.x - e.offsetX, this._lastTap.y - e.offsetY) < 25) {
+              clearTimeout(this._tapT); this._lastTap = null;
+              this.zoomAround(e.offsetX, e.offsetY, Math.round(this.zoom) + 1); this._moveEnd();
+            } else {
+              this._lastTap = { t: now, x: e.offsetX, y: e.offsetY };
+              const [lat, lon] = this.toLatLng(e.offsetX, e.offsetY);
+              this._tapT = setTimeout(() => this.emit('click', { lat, lon }), 260);
+            }
+          } else this._moveEnd();
+        } else if (this.pointers.size === 0) this._moveEnd();
+      };
+      c.addEventListener('pointerup', up);
+      c.addEventListener('pointercancel', up);
+      c.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const dz = -e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0022);
+        this.zoomAround(e.offsetX, e.offsetY, this.zoom + clamp(dz, -1, 1));
+        this._moveEnd();
+      }, { passive: false });
+    }
+    resize() {
+      const r = this.el.getBoundingClientRect();
+      this.w = Math.max(1, r.width); this.h = Math.max(1, r.height);
+      this.dpr = Math.min(3, root.devicePixelRatio || 1);
+      this.canvas.width = Math.round(this.w * this.dpr); this.canvas.height = Math.round(this.h * this.dpr);
+      this.redraw();
+    }
+
+    // ---- tiles + render ---------------------------------------------------
+    _tile(z, x, y, load) {
+      const k = z + '/' + x + '/' + y;
+      let t = this.tiles.get(k);
+      if (!t && load) {
+        const n = Math.pow(2, z), xx = ((x % n) + n) % n;
+        const url = this.tileUrl.replace('{z}', z).replace('{x}', xx).replace('{y}', y)
+          .replace('{s}', this.subdomains[(xx + y) % this.subdomains.length])
+          .replace('{r}', this.dpr > 1.5 ? '@2x' : '');
+        const img = new Image();
+        t = { img, ok: false };
+        img.onload = () => { t.ok = true; this.redraw(); };
+        img.onerror = () => { t.err = true; };
+        img.src = url;
+        this.tiles.set(k, t); this.tileOrder.push(k);
+        if (this.tileOrder.length > 500) this.tiles.delete(this.tileOrder.shift());
+      }
+      return t;
+    }
+    redraw() {
+      if (this._raf) return;
+      this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); });
+    }
+    render() {
+      const ctx = this.ctx, dpr = this.dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = '#e9ecef'; ctx.fillRect(0, 0, this.w, this.h);
+      const tz = clamp(Math.round(this.zoom), 0, this.maxNative);
+      const scale = Math.pow(2, this.zoom - tz), size = TS * scale;
+      const [cx, cy] = this.project(this.lat, this.lon, tz);
+      const ox = this.w / 2 - cx * scale, oy = this.h / 2 - cy * scale;
+      const x0 = Math.floor(-ox / size), x1 = Math.floor((this.w - ox) / size);
+      const y0 = Math.max(0, Math.floor(-oy / size)), y1 = Math.min(Math.pow(2, tz) - 1, Math.floor((this.h - oy) / size));
+      ctx.imageSmoothingEnabled = true;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const px = Math.round(ox + x * size), py = Math.round(oy + y * size), ps = Math.ceil(size) + 1;
+        const t = this._tile(tz, x, y, true);
+        if (t.ok) { ctx.drawImage(t.img, px, py, ps, ps); continue; }
+        for (let up = 1; up <= 4 && tz - up >= 0; up++) { // parent fallback
+          const f = Math.pow(2, up), pt = this._tile(tz - up, Math.floor(x / f), Math.floor(y / f), false);
+          if (pt && pt.ok) {
+            const sub = TS / f, sx = (((x % f) + f) % f) * sub, sy = (y % f) * sub;
+            ctx.drawImage(pt.img, sx, sy, sub, sub, px, py, ps, ps); break;
+          }
+        }
+      }
+      for (const l of this.layers) { ctx.save(); try { l(ctx, this); } catch (e) { console.error(e); } ctx.restore(); }
+    }
+  }
+  root.SlippyMap = SlippyMap;
+})(typeof self !== 'undefined' ? self : this);
+
+</script>
+<script>
+/* Pikmin Bloom Decor Finder — app/UI */
+(function () {
+  'use strict';
+  const E = window.PBEngine;
+  const $ = (s) => document.querySelector(s);
+  const html = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const APP_VERSION = '1.0.0';
+  const LS_KEY = 'pbdecor.v1';
+  const CACHE_V = 'c1';
+  const MIN_LOAD_ZOOM = 14.5;
+  const MAX_VIEW_M = 3200;
+  const DEFAULT_ENDPOINTS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  ];
+  const BASEMAPS = {
+    carto: { url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', sub: ['a', 'b', 'c', 'd'], attr: '© OpenStreetMap contributors · © CARTO', label: 'Clean (CARTO Voyager)' },
+    osm: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', sub: ['a'], attr: '© OpenStreetMap contributors', label: 'OpenStreetMap standard' },
+  };
+  const LEVEL_COLORS = ['#16a34a', '#eab308', '#f97316', '#ef4444'];
+
+  // --------------------------------------------------------------------------
+  // State + persistence
+  // --------------------------------------------------------------------------
+  const saved = load();
+  const state = {
+    target: saved.target || null,
+    opts: Object.assign({}, E.DEFAULT_OPTS, saved.opts || {}),
+    settings: Object.assign({
+      basemap: 'carto', date: '', endpoint: 'auto', customEndpoint: '', ttlDays: 30,
+      showCells: true, showHeat: true, heatOpacity: 0.5,
+    }, saved.settings || {}),
+    view: saved.view || { lat: 35.6812, lon: 139.7671, zoom: 16 },
+    readings: Array.isArray(saved.readings) ? saved.readings : [],
+    store: new E.FeatureStore(),
+    index: null, ig: null, spots: [], heat: null,
+    probe: null, probeDet: null, me: null, live: false,
+    cal: { lat: null, lon: null, src: null, sel: new Set(), note: '' },
+    calResults: null, isolatable: null, failedTiles: new Set(),
+    tab: 'spots',
+  };
+  function load() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; } }
+  function persist() {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        target: state.target, opts: state.opts, settings: state.settings,
+        view: { lat: map.lat, lon: map.lon, zoom: map.zoom }, readings: state.readings,
+      }));
+    } catch (e) { /* storage unavailable: fine */ }
+  }
+
+  // --------------------------------------------------------------------------
+  // Tile cache (IndexedDB with in-memory fallback)
+  // --------------------------------------------------------------------------
+  const cache = {
+    mem: new Map(), db: null, tried: false,
+    async open() {
+      if (this.tried) return this.db; this.tried = true;
+      try {
+        this.db = await new Promise((res, rej) => {
+          const r = indexedDB.open('pbdecor', 1);
+          r.onupgradeneeded = () => r.result.createObjectStore('tiles');
+          r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+        });
+      } catch (e) { this.db = null; }
+      return this.db;
+    },
+    key(k) { return CACHE_V + '|' + (state.settings.date || 'live') + '|' + k; },
+    async get(k) {
+      const key = this.key(k);
+      if (this.mem.has(key)) return this.mem.get(key);
+      const db = await this.open(); if (!db) return null;
+      try {
+        return await new Promise((res) => {
+          const r = db.transaction('tiles').objectStore('tiles').get(key);
+          r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
+        });
+      } catch (e) { return null; }
+    },
+    async set(k, v) {
+      const key = this.key(k); this.mem.set(key, v);
+      const db = await this.open(); if (!db) return;
+      try { db.transaction('tiles', 'readwrite').objectStore('tiles').put(v, key); } catch (e) { /* quota etc. */ }
+    },
+    async clear() {
+      this.mem.clear();
+      const db = await this.open(); if (!db) return;
+      try { db.transaction('tiles', 'readwrite').objectStore('tiles').clear(); } catch (e) { /* ignore */ }
+    },
+  };
+
+  // --------------------------------------------------------------------------
+  // Overpass with endpoint fallback, query-variant fallback, concurrency limit
+  // --------------------------------------------------------------------------
+  class QueryError extends Error {}
+  function endpoints() {
+    const list = DEFAULT_ENDPOINTS.slice();
+    const custom = (state.settings.customEndpoint || '').trim();
+    if (custom) list.unshift(custom);
+    let pref = null; try { pref = localStorage.getItem('pbdecor.ep'); } catch (e) { /* */ }
+    if (state.settings.endpoint !== 'auto') return [state.settings.endpoint === 'custom' ? custom : state.settings.endpoint, ...list].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    if (pref && list.includes(pref)) list.splice(list.indexOf(pref), 1), list.unshift(pref);
+    return list;
+  }
+  async function overpass(query) {
+    let lastErr = null;
+    for (const ep of endpoints()) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 80000);
+      try {
+        const res = await fetch(ep, {
+          method: 'POST', signal: ctl.signal,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'data=' + encodeURIComponent(query),
+        });
+        if (res.status === 400) throw new QueryError((await res.text()).slice(0, 400));
+        if (!res.ok) { lastErr = new Error(ep.split('/')[2] + ' HTTP ' + res.status); continue; }
+        const json = await res.json();
+        if (json.remark && /runtime error|timed out|out of memory|too busy/i.test(json.remark)) { lastErr = new Error(json.remark); continue; }
+        try { localStorage.setItem('pbdecor.ep', ep); } catch (e) { /* */ }
+        return json;
+      } catch (e) {
+        if (e instanceof QueryError) throw e;
+        lastErr = e.name === 'AbortError' ? new Error(ep.split('/')[2] + ' timed out') : e;
+      } finally { clearTimeout(timer); }
+    }
+    throw lastErr || new Error('No Overpass server reachable');
+  }
+  async function fetchTile(key) {
+    let qerr = null;
+    for (const variant of ['full', 'safe', 'minimal']) {
+      const built = E.buildQuery(key, { variant, date: state.settings.date });
+      try { return E.parseTile(await overpass(built.query), built); } catch (e) {
+        if (e instanceof QueryError) { qerr = e; console.warn('Query variant', variant, 'rejected:', e.message); continue; }
+        throw e;
+      }
+    }
+    throw qerr;
+  }
+  const inflight = new Map();
+  let active = 0; const waiters = [];
+  async function slot() { if (active < 2) { active++; return; } await new Promise((r) => waiters.push(r)); active++; }
+  function release() { active--; const w = waiters.shift(); if (w) w(); }
+  function getTile(key) {
+    if (state.store.has(key)) return Promise.resolve(true);
+    if (inflight.has(key)) return inflight.get(key);
+    const p = (async () => {
+      const c = await cache.get(key);
+      const ttl = state.settings.ttlDays * 864e5;
+      if (c && c.fetched && Date.now() - c.fetched < ttl) { state.store.addTile(c); return true; }
+      await slot();
+      try {
+        let tile, err;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try { tile = await fetchTile(key); break; } catch (e) { err = e; if (e instanceof QueryError) break; await new Promise((r) => setTimeout(r, 2500)); }
+        }
+        if (!tile) {
+          if (c) { state.store.addTile(c); return true; } // stale cache beats nothing
+          throw err;
+        }
+        state.store.addTile(tile); state.failedTiles.delete(key); cache.set(key, tile);
+        return true;
+      } finally { release(); }
+    })();
+    inflight.set(key, p);
+    p.catch(() => state.failedTiles.add(key)).finally(() => inflight.delete(key));
+    return p;
+  }
+  async function ensureTiles(keys, onProgress) {
+    let done = 0;
+    const total = keys.length;
+    const errors = [];
+    await Promise.all(keys.map((k) => getTile(k).catch((e) => errors.push(e)).finally(() => { done++; onProgress && onProgress(done, total); })));
+    return errors;
+  }
+
+  // --------------------------------------------------------------------------
+  // Map
+  // --------------------------------------------------------------------------
+  const bm = BASEMAPS[state.settings.basemap] || BASEMAPS.carto;
+  const map = new window.SlippyMap($('#map'), { lat: state.view.lat, lon: state.view.lon, zoom: state.view.zoom, tileUrl: bm.url, subdomains: bm.sub, maxZoom: 20.5 });
+  const attr = document.createElement('div');
+  attr.style.cssText = 'position:fixed;right:62px;z-index:4;font-size:10px;background:rgba(255,255,255,.8);padding:1px 5px;border-radius:4px;color:#333';
+  document.body.appendChild(attr);
+  function placeAttr() { attr.textContent = (BASEMAPS[state.settings.basemap] || BASEMAPS.carto).attr; attr.style.bottom = `calc(${getComputedStyle(document.documentElement).getPropertyValue('--sheet-h')} + 2px)`; if (innerWidth >= 900) attr.style.bottom = '2px'; }
+
+  function sheetPx() { return innerWidth >= 900 ? 0 : sheetFrac * innerHeight; }
+  /** Animate so (lat, lon) sits in the middle of the map area not covered by the sheet. */
+  function frame(lat, lon, zoom) {
+    const z = zoom == null ? map.zoom : zoom;
+    const visibleCy = (map.h - sheetPx()) / 2;
+    const [px, py] = map.project(lat, lon, z);
+    const [clat, clon] = map.unproject(px, py + (map.h / 2 - visibleCy), z);
+    map.animateTo(clat, clon, z);
+  }
+
+  function viewBBox() {
+    const b = map.getBounds();
+    const midLat = (b.s + b.n) / 2;
+    const wM = E.distM(midLat, b.w, midLat, b.e), hM = E.distM(b.s, b.w, b.n, b.w);
+    if (wM <= MAX_VIEW_M && hM <= MAX_VIEW_M) return b;
+    const c = { s: map.lat, n: map.lat, w: map.lon, e: map.lon };
+    return E.expandBBox(c, MAX_VIEW_M / 2);
+  }
+
+  // ---- layers ----
+  function poly(ctx, pts) {
+    ctx.beginPath();
+    pts.forEach(([la, lo], i) => { const [x, y] = map.toScreen(la, lo); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.closePath();
+  }
+  function circle(ctx, lat, lon, rM) {
+    const [x, y] = map.toScreen(lat, lon);
+    ctx.beginPath(); ctx.arc(x, y, Math.max(1, rM / map.metersPerPixel(lat)), 0, Math.PI * 2);
+  }
+  map.layers.push(function heatLayer(ctx) {
+    if (!state.settings.showHeat || !state.heat || !state.ig) return;
+    const b = state.ig.bbox;
+    const [x0, y0] = map.toScreen(b.n, b.w), [x1, y1] = map.toScreen(b.s, b.e);
+    ctx.globalAlpha = state.settings.heatOpacity;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(state.heat, x0, y0, x1 - x0, y1 - y0);
+  });
+  map.layers.push(function cellLayer(ctx) {
+    if (!state.settings.showCells || !state.index || map.zoom < 14.5) return;
+    const vb = map.getBounds();
+    const t = state.target;
+    const cellPx = state.index.grid.edge / map.metersPerPixel();
+    ctx.lineWidth = 1;
+    for (const c of state.index.cells.values()) {
+      if (c.bbox.n < vb.s || c.bbox.s > vb.n || c.bbox.e < vb.w || c.bbox.w > vb.e) continue;
+      const isT = t && c.cats.includes(t);
+      const h = E.CAT[c.cats[0]].hue;
+      poly(ctx, c.corners);
+      ctx.fillStyle = isT ? 'rgba(22,163,74,.38)' : (t ? 'rgba(100,116,139,.16)' : `hsla(${h},75%,55%,.22)`);
+      ctx.strokeStyle = isT ? '#15803d' : (t ? 'rgba(71,85,105,.55)' : `hsla(${h},70%,35%,.7)`);
+      ctx.fill(); ctx.stroke();
+    }
+    if (cellPx >= 20) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const fs = Math.min(18, cellPx / 3.2);
+      ctx.font = `${fs}px system-ui, "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji", sans-serif`;
+      for (const c of state.index.cells.values()) {
+        if (c.bbox.n < vb.s || c.bbox.s > vb.n || c.bbox.e < vb.w || c.bbox.w > vb.e) continue;
+        const [x, y] = map.toScreen(c.lat, c.lon);
+        const ic = c.cats.slice(0, 3).map((id) => E.CAT[id].icon).join('') + (c.cats.length > 3 ? '+' : '');
+        ctx.globalAlpha = t && !c.cats.includes(t) ? 0.7 : 1;
+        ctx.fillText(ic, x, y);
+      }
+      ctx.globalAlpha = 1;
+    }
+  });
+  map.layers.push(function spotLayer(ctx) {
+    if (!state.target || !state.spots.length) return;
+    state.spots.forEach((s, i) => {
+      const col = LEVEL_COLORS[Math.min(3, s.level)];
+      if (s.safe > 3) {
+        circle(ctx, s.lat, s.lon, s.safe);
+        ctx.strokeStyle = col; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]);
+      }
+      const [x, y] = map.toScreen(s.lat, s.lon);
+      ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+      ctx.fillStyle = s.level === 1 ? '#422006' : '#fff';
+      ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), x, y + 0.5);
+    });
+  });
+  map.layers.push(function probeLayer(ctx) {
+    const p = state.probe; if (!p) return;
+    const r = state.opts.radius;
+    circle(ctx, p.lat, p.lon, r);
+    ctx.fillStyle = 'rgba(37,99,235,.07)'; ctx.fill();
+    ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2; ctx.setLineDash([6, 5]); ctx.stroke(); ctx.setLineDash([]);
+    if (state.probeDet) {
+      for (const { cell } of state.probeDet.inRange) {
+        poly(ctx, cell.corners); ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2.2; ctx.stroke();
+        const [x, y] = map.toScreen(cell.lat, cell.lon);
+        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#2563eb'; ctx.fill();
+      }
+    }
+    const [x, y] = map.toScreen(p.lat, p.lon);
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = '#2563eb'; ctx.fill();
+  });
+  map.layers.push(function meLayer(ctx) {
+    const m = state.me; if (!m) return;
+    if (m.acc) { circle(ctx, m.lat, m.lon, m.acc); ctx.fillStyle = 'rgba(14,165,233,.12)'; ctx.fill(); }
+    const [x, y] = map.toScreen(m.lat, m.lon);
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.fillStyle = '#0ea5e9'; ctx.fill();
+  });
+
+  // --------------------------------------------------------------------------
+  // Analysis pipeline
+  // --------------------------------------------------------------------------
+  let analyzeToken = 0, lastIndexKey = '';
+  function setStatus(msg, cls) {
+    const el = $('#status');
+    if (!msg) { el.hidden = true; return; }
+    el.hidden = false; el.className = 'pill ' + (cls || ''); el.innerHTML = msg;
+  }
+  async function analyze() {
+    persist();
+    const token = ++analyzeToken;
+    if (map.zoom < MIN_LOAD_ZOOM) {
+      setStatus('Zoom in to load decor data');
+      renderLegend();
+      return;
+    }
+    const vb = viewBBox();
+    const grid = E.getGrid(state.opts.grid);
+    const need = E.tilesForBBox(E.expandBBox(vb, state.opts.radius + grid.edge + 40));
+    const missing = need.filter((k) => !state.store.has(k));
+    if (missing.length) setStatus(`Loading decor data… 0/${missing.length}`, 'busy');
+    const errors = await ensureTiles(missing, (d, t) => { if (token === analyzeToken) setStatus(`Loading decor data… ${d}/${t}`, 'busy'); });
+    if (token !== analyzeToken) return;
+    const failed = need.filter((k) => !state.store.has(k));
+    setStatus('Analysing…', 'busy');
+    await new Promise((r) => setTimeout(r, 0));
+    if (token !== analyzeToken) return;
+    const key = [state.store.version, JSON.stringify(state.opts), vb.s.toFixed(5), vb.w.toFixed(5), vb.n.toFixed(5), vb.e.toFixed(5)].join('|');
+    if (key !== lastIndexKey) {
+      state.index = E.buildCellIndex(state.store, E.expandBBox(vb, state.opts.radius), state.opts);
+      state.index.view = vb;
+      state.isolatable = null;
+      lastIndexKey = key;
+      runTarget();
+    }
+    refreshProbe();
+    const nTarget = state.target ? [...state.index.cells.values()].filter((c) => c.cats.includes(state.target)).length : 0;
+    if (failed.length) {
+      const msg = errors[0] ? html(errors[0].message || errors[0]) : 'server busy';
+      setStatus(`⚠️ ${failed.length} of ${need.length} map areas failed (${msg}). <button class="btn sm" id="retry">Retry</button>`, 'warn');
+      const b = $('#retry'); if (b) b.onclick = () => { lastIndexKey = ''; analyze(); };
+    } else if (state.target) {
+      const pure = state.spots.filter((s) => s.level === 0).length;
+      setStatus(`${E.CAT[state.target].icon} ${nTarget} cell${nTarget === 1 ? '' : 's'} · ${pure} pure spot${pure === 1 ? '' : 's'}`);
+    } else setStatus(`${state.index.cells.size} decor cells in view`);
+    renderAll();
+    map.redraw();
+  }
+  function runTarget() {
+    state.ig = null; state.spots = []; state.heat = null;
+    if (!state.target || !state.index) return;
+    const samples = Math.min(120000, Math.max(30000, map.w * map.h / 6));
+    state.ig = E.isolationGrid(state.index, state.index.view, state.target, samples);
+    state.spots = E.rankSpots(state.index, state.ig, 10);
+    state.heat = heatCanvas(state.ig);
+  }
+  function heatCanvas(ig) {
+    const c = document.createElement('canvas');
+    c.width = ig.cols; c.height = ig.rows;
+    const cx = c.getContext('2d'), img = cx.createImageData(ig.cols, ig.rows);
+    const cols = [[22, 163, 74], [234, 179, 8], [249, 115, 22], [239, 68, 68]];
+    for (let k = 0; k < ig.val.length; k++) {
+      const v = ig.val[k]; if (v < 0) continue;
+      const [r, g, b] = cols[Math.min(3, v)];
+      img.data[k * 4] = r; img.data[k * 4 + 1] = g; img.data[k * 4 + 2] = b; img.data[k * 4 + 3] = v === 0 ? 255 : 190;
+    }
+    cx.putImageData(img, 0, 0);
+    return c;
+  }
+  let moveTimer = 0;
+  map.on('moveend', () => { clearTimeout(moveTimer); moveTimer = setTimeout(analyze, 350); });
+
+  // detector at the probe point
+  async function refreshProbe() {
+    const p = state.probe;
+    if (!p) { state.probeDet = null; return; }
+    const idx = state.index;
+    const inner = idx && E.expandBBox(idx.bbox, -state.opts.radius);
+    if (idx && inner.s < inner.n && E.bboxContains(inner, p.lat, p.lon)) {
+      state.probeDet = E.detect(idx, p.lat, p.lon);
+    } else {
+      const grid = E.getGrid(state.opts.grid);
+      const b = E.expandBBox({ s: p.lat, n: p.lat, w: p.lon, e: p.lon }, state.opts.radius + grid.edge);
+      await ensureTiles(E.tilesForBBox(E.expandBBox(b, 40)));
+      const local = E.buildCellIndex(state.store, b, state.opts);
+      state.probeDet = E.detect(local, p.lat, p.lon);
+    }
+  }
+  async function setProbe(lat, lon, openTab) {
+    state.probe = { lat, lon };
+    await refreshProbe();
+    if (openTab) showTab('detector');
+    renderDetector(); renderLegend(); map.redraw();
+  }
+  map.on('click', (e) => {
+    if (state.tab === 'calibrate') {
+      state.cal.lat = e.lat; state.cal.lon = e.lon; state.cal.src = 'map';
+      setProbe(e.lat, e.lon, false).then(renderCalibrate);
+      return;
+    }
+    setProbe(e.lat, e.lon, true);
+  });
+
+  // --------------------------------------------------------------------------
+  // UI rendering
+  // --------------------------------------------------------------------------
+  function toast(msg, ms) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms || 2600);
+  }
+  function catLabel(id) { return id === 'roadside' ? E.ROADSIDE.icon + ' Roadside' : `${E.CAT[id].icon} ${E.CAT[id].name}`; }
+  function fmtDist(m) { return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
+  function refPoint() { return state.me || { lat: map.lat, lon: map.lon }; }
+  function dirLink(lat, lon) { return `https://www.google.com/maps/dir/?api=1&destination=${lat.toFixed(6)},${lon.toFixed(6)}&travelmode=walking`; }
+
+  function renderAll() { renderPickLabel(); renderSpots(); renderDetector(); renderLegend(); if (state.tab === 'calibrate') renderCalibrate(); }
+  function renderPickLabel() {
+    $('#pickLabel').textContent = state.target ? E.CAT[state.target].name : 'Choose a decor type';
+    $('#pick .ico').textContent = state.target ? E.CAT[state.target].icon : '🎯';
+  }
+  function renderLegend() {
+    const el = $('#legend');
+    if (state.target && state.settings.showHeat && state.ig) {
+      el.innerHTML = `<span><i style="background:${LEVEL_COLORS[0]}"></i>Only ${html(E.CAT[state.target].name)}</span>` +
+        `<span><i style="background:${LEVEL_COLORS[1]}"></i>+1 other</span><span><i style="background:${LEVEL_COLORS[2]}"></i>+2</span><span><i style="background:${LEVEL_COLORS[3]}"></i>+3 or more</span>`;
+      el.hidden = false;
+    } else if (state.probe) {
+      el.innerHTML = '<span><i style="background:#2563eb"></i>Detector range · cells whose centre (dot) is inside count</span>';
+      el.hidden = false;
+    } else el.hidden = true;
+  }
+
+  function renderSpots() {
+    const el = $('#p-spots');
+    if (!state.target) {
+      el.innerHTML = `<h3>Find a spot for one decor type</h3>
+        <p class="muted">Tap <b>🎯 Choose a decor type</b> at the top. The map turns <b style="color:${LEVEL_COLORS[0]}">green</b> wherever that type is the <i>only</i> one the detector should find, so its seedling is guaranteed to be that decor.</p>
+        ${isolatableHtml()}`;
+      bindIsolatable(el);
+      return;
+    }
+    const c = E.CAT[state.target];
+    if (map.zoom < MIN_LOAD_ZOOM) { el.innerHTML = `<p class="muted">Zoom in to search for ${html(c.name)} spots.</p>`; return; }
+    if (!state.index) { el.innerHTML = '<p class="muted">Loading…</p>'; return; }
+    const nCells = [...state.index.cells.values()].filter((x) => x.cats.includes(state.target)).length;
+    const ref = refPoint();
+    let out = `<div class="row" style="justify-content:space-between"><h3>${c.icon} ${html(c.name)}</h3><span class="muted small">${nCells} cell${nCells === 1 ? '' : 's'} in view</span></div>`;
+    if (!nCells) {
+      out += `<p class="muted">No ${html(c.name)} locations in OpenStreetMap in this view. Pan or zoom out a little (data loads up to ~3 km across).</p>${isolatableHtml()}`;
+      el.innerHTML = out; bindIsolatable(el); return;
+    }
+    if (!state.spots.length) out += '<p class="muted">The target shows up here, but always alongside many other types.</p>';
+    const pureCount = state.spots.filter((s) => s.level === 0).length;
+    if (!pureCount && state.spots.length) out += `<p class="muted">No pure spot in this view. These have the fewest other types. Try panning to nearby areas.</p>`;
+    state.spots.forEach((s, i) => {
+      const d = E.distM(ref.lat, ref.lon, s.lat, s.lon);
+      const others = s.otherCats.map((id) => E.CAT[id].icon).join(' ');
+      out += `<div class="card ${s.level === 0 ? 'pure' : ''}">
+        <div class="spot-h"><span class="num l${Math.min(3, s.level)}">${i + 1}</span>
+          <span>${s.level === 0 ? `Only ${c.icon} ${html(c.name)}` : `${c.icon} + ${s.level} other${s.level > 1 ? 's' : ''}: <span class="icons">${others}</span>`}</span></div>
+        <div class="muted small" style="margin:4px 0 8px">
+          ${s.level === 0 ? 'Guaranteed decor if the map data matches the game.' : `Your guaranteed seedling is one of ${s.level + 1} types.`}
+          Safe zone ±${Math.round(s.safe)} m · ${fmtDist(d)} away · ${s.targetCells} ${html(c.name)} cell${s.targetCells === 1 ? '' : 's'} in range</div>
+        <div class="row"><button class="btn sm" data-go="${i}">Show</button>
+          <a class="btn sm" href="${dirLink(s.lat, s.lon)}" target="_blank" rel="noopener">Walk there ↗</a>
+          <button class="btn sm" data-copy="${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}">Copy coords</button></div></div>`;
+    });
+    out += `<p class="muted small">Safe zone = how far you can drift (GPS error) and still be in the same zone. Prefer spots with ±15 m or more.</p>`;
+    el.innerHTML = out;
+    el.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => {
+      const s = state.spots[+b.dataset.go];
+      if (innerWidth < 900) setSheet(0.3);
+      frame(s.lat, s.lon, Math.max(map.zoom, 17));
+      setProbe(s.lat, s.lon, false);
+    });
+    el.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copyText(b.dataset.copy));
+  }
+  function isolatableHtml() {
+    if (!state.index || map.zoom < MIN_LOAD_ZOOM) return '';
+    if (!state.isolatable) {
+      const present = new Map();
+      for (const c of state.index.cells.values()) for (const id of c.cats) present.set(id, (present.get(id) || 0) + 1);
+      const list = [];
+      for (const [id, n] of present) {
+        const ig = E.isolationGrid(state.index, state.index.view, id, 5000);
+        let pure = 0; for (const v of ig.val) if (v === 0) pure++;
+        list.push({ id, n, pureM2: pure * ig.step * ig.step });
+      }
+      list.sort((a, b) => b.pureM2 - a.pureM2 || b.n - a.n);
+      state.isolatable = list;
+    }
+    if (!state.isolatable.length) return '<p class="muted">No decor locations in this view.</p>';
+    return `<h3 style="margin-top:14px">In this view</h3><div class="chips">` + state.isolatable.map((x) =>
+      `<button class="chip ${x.pureM2 > 0 ? 'target' : ''}" data-t="${x.id}" title="${x.n} cells">${E.CAT[x.id].icon} ${html(E.CAT[x.id].name)}${x.pureM2 > 0 ? ' ★' : ''}</button>`).join('') +
+      `</div><p class="muted small">★ = has at least one spot where it is the only type.</p>`;
+  }
+  function bindIsolatable(el) { el.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => setTarget(b.dataset.t)); }
+
+  function renderDetector() {
+    const el = $('#p-detector');
+    const p = state.probe, d = state.probeDet;
+    if (!p) {
+      el.innerHTML = `<h3>Detector preview</h3><p class="muted">Tap anywhere on the map to see what the detector should show there. Turn on 📡 to follow your GPS while walking.</p>`;
+      return;
+    }
+    if (!d) { el.innerHTML = '<p class="muted">Loading…</p>'; return; }
+    const t = state.target;
+    let out = `<div class="row" style="justify-content:space-between"><h3>Detector here</h3>
+      <span class="muted small">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}${state.live ? ' · live' : ''}</span></div>`;
+    if (t) {
+      const only = d.shown.length === 1 && d.shown[0] === t;
+      out += only ? `<p><span class="badge ok">Only ${E.CAT[t].icon} ${html(E.CAT[t].name)} — guaranteed!</span></p>`
+        : d.shown.includes(t) ? `<p><span class="badge no">${E.CAT[t].icon} plus ${d.shown.length - 1} other type${d.shown.length > 2 ? 's' : ''}</span></p>`
+          : `<p><span class="badge no">${E.CAT[t].icon} ${html(E.CAT[t].name)} not in range</span></p>`;
+    }
+    out += '<div class="detlist">';
+    if (d.roadside) out += `<div class="dt"><span>${E.ROADSIDE.icon}</span><span>Roadside</span></div>`;
+    d.shown.forEach((id) => { out += `<div class="dt ${id === t ? 't' : ''}"><span>${E.CAT[id].icon}</span><span>${html(E.CAT[id].name)}</span></div>`; });
+    d.hidden.forEach((id) => { out += `<div class="dt hid" title="Beyond the ${state.opts.maxShown}-icon limit"><span>${E.CAT[id].icon}</span><span>${html(E.CAT[id].name)}</span></div>`; });
+    out += '</div>';
+    if (d.hidden.length) out += `<p class="muted small">Faded icons are further away than the ${state.opts.maxShown} nearest types, so they probably won't show.</p>`;
+    if (d.inRange.length) {
+      out += `<details><summary>Why? ${d.inRange.length} cell${d.inRange.length === 1 ? '' : 's'} in range</summary><table><tr><th>Dist.</th><th>Decor · source</th></tr>`;
+      for (const { cell, d: dist } of d.inRange) {
+        const seen = new Set();
+        const src = cell.src.filter((s) => { const k = s.cat + s.name; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6)
+          .map((s) => `${E.CAT[s.cat].icon} ${html(s.name || E.CAT[s.cat].name)} <a class="small" href="https://www.openstreetmap.org/${{ n: 'node', w: 'way', r: 'relation' }[s.id[0]]}/${s.id.slice(1)}" target="_blank" rel="noopener">osm</a>`).join('<br>');
+        out += `<tr><td>${Math.round(dist)} m</td><td>${src}</td></tr>`;
+      }
+      out += '</table></details>';
+    }
+    out += `<div class="row" style="margin-top:10px"><button class="btn sm" id="logHere">Log a real detector reading here</button>
+      <button class="btn sm" id="clearProbe">Clear</button></div>`;
+    el.innerHTML = out;
+    $('#logHere').onclick = () => { state.cal.lat = p.lat; state.cal.lon = p.lon; state.cal.src = state.live ? 'gps' : 'map'; showTab('calibrate'); };
+    $('#clearProbe').onclick = () => { state.probe = null; state.probeDet = null; renderDetector(); renderLegend(); map.redraw(); };
+  }
+
+  // ---- calibration ----
+  function renderCalibrate() {
+    const el = $('#p-calibrate');
+    const c = state.cal;
+    const all = [...E.CATEGORIES.map((x) => x.id), 'roadside'];
+    let out = `<h3>Log a real detector reading</h3>
+      <p class="muted small">Stand still, open the detector and wait for the icons. Then tap the map where you are (or use GPS), tick exactly the icons the game showed, and save. A few readings in varied places let the tool test which cell model matches the game.</p>
+      <div class="row" style="margin-bottom:8px"><button class="btn sm" id="calGps">📍 Use my GPS</button>
+      <span class="muted small">${c.lat != null ? `Location: ${c.lat.toFixed(5)}, ${c.lon.toFixed(5)} (${c.src === 'gps' ? 'GPS' : 'map tap'})` : 'Tap the map to set the location'}</span></div>
+      <input id="calFilter" placeholder="Filter icons…" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px">
+      <div class="chips" id="calChips">${all.map((id) => `<button class="chip ${c.sel.has(id) ? 'on' : ''}" data-id="${id}">${html(catLabel(id))}</button>`).join('')}</div>
+      <input id="calNote" placeholder="Note (optional), e.g. 'icons appeared after 3 s'" value="${html(c.note)}" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-top:8px">
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="calSave" ${c.lat == null || !c.sel.size ? 'disabled' : ''}>Save reading</button>
+      <span class="muted small">${c.sel.size} selected</span></div>`;
+    out += `<h3 style="margin-top:16px">Readings (${state.readings.length})</h3>`;
+    if (state.readings.length) {
+      out += '<table>' + state.readings.slice().reverse().map((r) => `<tr><td class="small">${new Date(r.t).toLocaleDateString()}<br>${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}</td><td class="icons">${r.observed.map((id) => id === 'roadside' ? E.ROADSIDE.icon : (E.CAT[id] ? E.CAT[id].icon : '?')).join(' ')}</td><td><button class="btn sm" data-show="${r.id}">Show</button> <button class="btn sm" data-del="${r.id}">✕</button></td></tr>`).join('') + '</table>';
+      out += `<div class="row" style="margin-top:10px"><button class="btn primary" id="calTest">Test cell models against my readings</button></div>`;
+    }
+    if (state.calResults) out += calResultsHtml();
+    out += `<details><summary>Export / import readings</summary>
+      <p class="muted small">Export to back up your readings or send them to whoever is tuning the tool.</p>
+      <textarea id="calExport" readonly>${html(exportJson())}</textarea>
+      <div class="row"><button class="btn sm" id="calCopy">Copy</button><a class="btn sm" id="calDl" download="pikmin-decor-readings.json">Download</a></div>
+      <p class="muted small" style="margin-top:10px">Import (paste exported JSON):</p>
+      <textarea id="calImport" placeholder='{"readings":[…]}'></textarea>
+      <button class="btn sm" id="calImportBtn">Import</button></details>`;
+    el.innerHTML = out;
+    const filt = $('#calFilter');
+    filt.oninput = () => { const q = filt.value.toLowerCase(); el.querySelectorAll('#calChips .chip').forEach((b) => { b.style.display = b.textContent.toLowerCase().includes(q) ? '' : 'none'; }); };
+    el.querySelectorAll('#calChips .chip').forEach((b) => b.onclick = () => {
+      const id = b.dataset.id;
+      if (c.sel.has(id)) c.sel.delete(id); else {
+        if (id === 'roadside') c.sel.clear(); else c.sel.delete('roadside');
+        c.sel.add(id);
+      }
+      c.note = $('#calNote').value; renderCalibrate();
+    });
+    $('#calNote').oninput = (e) => { c.note = e.target.value; };
+    $('#calGps').onclick = () => locate((pos) => { c.lat = pos.lat; c.lon = pos.lon; c.src = 'gps'; c.acc = pos.acc; setProbe(pos.lat, pos.lon, false); frame(pos.lat, pos.lon, Math.max(map.zoom, 17)); renderCalibrate(); });
+    $('#calSave').onclick = () => {
+      state.readings.push({ id: Date.now(), t: new Date().toISOString(), lat: +c.lat.toFixed(7), lon: +c.lon.toFixed(7), src: c.src, acc: c.acc || null, observed: [...c.sel], note: c.note || '' });
+      c.sel = new Set(); c.note = ''; state.calResults = null; persist(); toast('Reading saved'); renderCalibrate();
+    };
+    el.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => { state.readings = state.readings.filter((r) => String(r.id) !== b.dataset.del); state.calResults = null; persist(); renderCalibrate(); });
+    el.querySelectorAll('[data-show]').forEach((b) => b.onclick = () => { const r = state.readings.find((x) => String(x.id) === b.dataset.show); frame(r.lat, r.lon, 17.5); setProbe(r.lat, r.lon, false); });
+    const t = $('#calTest'); if (t) t.onclick = testModels;
+    $('#calCopy').onclick = () => copyText($('#calExport').value);
+    try { $('#calDl').href = URL.createObjectURL(new Blob([exportJson()], { type: 'application/json' })); } catch (e) { /* */ }
+    $('#calImportBtn').onclick = () => {
+      try {
+        const data = JSON.parse($('#calImport').value);
+        const arr = Array.isArray(data) ? data : data.readings;
+        let added = 0;
+        for (const r of arr || []) {
+          if (typeof r.lat !== 'number' || !Array.isArray(r.observed)) continue;
+          if (!r.id) r.id = Date.now() + added;
+          if (state.readings.some((x) => x.id === r.id)) continue;
+          state.readings.push(r); added++;
+        }
+        persist(); state.calResults = null; toast(`Imported ${added} reading${added === 1 ? '' : 's'}`); renderCalibrate();
+      } catch (e) { toast('Could not read that JSON'); }
+    };
+    el.querySelectorAll('[data-use]').forEach((b) => b.onclick = () => {
+      const r = state.calResults.list[+b.dataset.use];
+      Object.assign(state.opts, { grid: r.opts.grid, areaRule: r.opts.areaRule, cuisineMode: r.opts.cuisineMode, bridgeMode: r.opts.bridgeMode });
+      toast('Model applied'); lastIndexKey = ''; state.calResults = null; renderSettings(); renderCalibrate(); analyze();
+    });
+  }
+  function exportJson() {
+    return JSON.stringify({ app: 'pikmin-decor-finder', version: APP_VERSION, exported: new Date().toISOString(), model: state.opts, osmDate: state.settings.date || 'live', readings: state.readings }, null, 1);
+  }
+  async function testModels() {
+    const btn = $('#calTest'); btn.disabled = true; btn.textContent = 'Loading map data…';
+    const keys = new Set();
+    for (const r of state.readings) {
+      const b = E.expandBBox({ s: r.lat, n: r.lat, w: r.lon, e: r.lon }, state.opts.radius + 200);
+      E.tilesForBBox(b).forEach((k) => keys.add(k));
+    }
+    const errs = await ensureTiles([...keys], (d, t) => { btn.textContent = `Loading map data… ${d}/${t}`; });
+    btn.textContent = 'Testing models…';
+    await new Promise((r) => setTimeout(r, 30));
+    const list = E.evaluateModels(state.store, state.readings, E.modelVariants(state.opts));
+    const curKey = JSON.stringify([state.opts.grid, state.opts.areaRule, state.opts.cuisineMode, state.opts.bridgeMode]);
+    const current = list.find((r) => JSON.stringify([r.opts.grid, r.opts.areaRule, r.opts.cuisineMode, r.opts.bridgeMode]) === curKey);
+    state.calResults = { list, current, errs: errs.length };
+    renderCalibrate();
+  }
+  function calResultsHtml() {
+    const { list, current, errs } = state.calResults;
+    const top = list.slice(0, 8);
+    let out = `<h3 style="margin-top:14px">Model fit</h3>
+      <p class="muted small">Score = average overlap between predicted and observed icons (100% = identical). Exact = readings matched perfectly.${errs ? ` ⚠️ ${errs} map area(s) failed to load.` : ''}</p>
+      <table><tr><th>Score</th><th>Exact</th><th>Model</th><th></th></tr>`;
+    top.forEach((r, i) => {
+      out += `<tr><td><b>${Math.round(r.score * 100)}%</b></td><td>${r.exact}/${r.n}</td><td class="small">${html(r.label)}</td><td><button class="btn sm" data-use="${i}">Use</button></td></tr>`;
+    });
+    out += '</table>';
+    if (current) {
+      out += `<p class="small">Current model: <b>${Math.round(current.score * 100)}%</b> (${current.exact}/${current.n} exact)</p>`;
+      const bad = current.details.filter((d) => d.missing.length || d.extra.length);
+      if (bad.length) {
+        out += `<details><summary>Mismatches with the current model (${bad.length})</summary><table>`;
+        for (const d of bad) {
+          const r = state.readings.find((x) => x.id === d.id);
+          out += `<tr><td class="small">${r ? r.lat.toFixed(4) + ', ' + r.lon.toFixed(4) : ''}</td><td class="small">${d.missing.length ? 'Game showed, tool missed: ' + d.missing.map(catLabel).join(', ') + '<br>' : ''}${d.extra.length ? 'Tool predicted, game didn\'t: ' + d.extra.map(catLabel).join(', ') : ''}</td></tr>`;
+        }
+        out += '</table><p class="muted small">"Game showed, tool missed" often means the game has a place (from Foursquare or older OSM data) that today\'s OSM lacks. "Tool predicted" can mean the place was added to OSM after the game\'s last map update.</p></details>';
+      }
+    }
+    return out;
+  }
+
+  // ---- settings ----
+  function renderSettings() {
+    const el = $('#p-settings');
+    const o = state.opts, s = state.settings;
+    const opt = (v, label, cur) => `<option value="${html(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${html(label)}</option>`;
+    el.innerHTML = `<h3>Cell model</h3>
+      <div class="kv">
+        <label for="sGrid">Cell grid</label><select id="sGrid">${Object.entries(E.GRID_LABELS).map(([k, v]) => opt(k, v, o.grid)).join('')}</select>
+        <label for="sArea">Parks, water…</label><select id="sArea">${opt('center', 'Count a cell if its centre is inside', o.areaRule)}${opt('overlap', 'Count a cell if any part overlaps', o.areaRule)}</select>
+        <label for="sCuis">Cuisine places</label><select id="sCuis">${opt('both', 'Also count as Restaurant/Burger', o.cuisineMode)}${opt('specific', 'Cuisine decor only', o.cuisineMode)}</select>
+        <label for="sBridge">Bridges</label><select id="sBridge">${opt('named', 'Named bridges only', o.bridgeMode)}${opt('all', 'All bridge=yes ways', o.bridgeMode)}${opt('off', 'Ignore bridges', o.bridgeMode)}</select>
+        <label for="sRad">Detector range (m)</label><input id="sRad" type="number" min="20" max="300" step="5" value="${o.radius}">
+        <label for="sMax">Max icons shown</label><input id="sMax" type="number" min="1" max="12" value="${o.maxShown}">
+      </div>
+      <p class="muted small">Defaults come from Pikipedia (100 m range, cell centre must be in range). S2 level 17 is the best guess so far: about 6 of its cells fit in the 100 m circle, matching the 6–7 icon limit. Use Calibrate to check.</p>
+      <h3 style="margin-top:14px">Data</h3>
+      <div class="kv">
+        <label for="sDate">OSM data as of</label><input id="sDate" type="date" value="${html(s.date)}">
+        <label for="sEp">Overpass server</label><select id="sEp">${opt('auto', 'Automatic (fastest that works)', s.endpoint)}${DEFAULT_ENDPOINTS.map((u) => opt(u, u.split('/')[2], s.endpoint)).join('')}${opt('custom', 'Custom…', s.endpoint)}</select>
+        <label for="sCustom">Custom URL</label><input id="sCustom" placeholder="https://…/api/interpreter" value="${html(s.customEndpoint)}">
+        <label for="sTtl">Keep data (days)</label><input id="sTtl" type="number" min="1" max="365" value="${s.ttlDays}">
+      </div>
+      <p class="muted small">Leave the date empty to use today's OSM. The game refreshed its map in October 2026, so recent OSM edits may not be in the game yet. Setting a date (e.g. 2026-09-01) asks Overpass for the map as it was then. Those queries are slower, and big polygons may be less exact.</p>
+      <div class="row"><button class="btn sm" id="sClear">Clear downloaded data</button></div>
+      <h3 style="margin-top:14px">Display</h3>
+      <div class="kv">
+        <label for="sBase">Base map</label><select id="sBase">${Object.entries(BASEMAPS).map(([k, v]) => opt(k, v.label, s.basemap)).join('')}</select>
+        <label for="sOp">Heatmap opacity</label><input id="sOp" type="range" min="0.15" max="0.9" step="0.05" value="${s.heatOpacity}">
+      </div>
+      <p class="muted small" style="margin-top:14px">v${APP_VERSION} · engine ${E.ENGINE_VERSION}</p>`;
+    const on = (id, fn) => { $(id).onchange = fn; };
+    const remodel = () => { lastIndexKey = ''; persist(); analyze(); };
+    on('#sGrid', (e) => { o.grid = e.target.value; remodel(); });
+    on('#sArea', (e) => { o.areaRule = e.target.value; remodel(); });
+    on('#sCuis', (e) => { o.cuisineMode = e.target.value; remodel(); });
+    on('#sBridge', (e) => { o.bridgeMode = e.target.value; remodel(); });
+    on('#sRad', (e) => { o.radius = Math.max(20, Math.min(300, +e.target.value || 100)); remodel(); });
+    on('#sMax', (e) => { o.maxShown = Math.max(1, Math.min(12, +e.target.value || 6)); remodel(); });
+    on('#sDate', (e) => { s.date = e.target.value; state.store.clear(); remodel(); });
+    on('#sEp', (e) => { s.endpoint = e.target.value; persist(); });
+    on('#sCustom', (e) => { s.customEndpoint = e.target.value.trim(); persist(); });
+    on('#sTtl', (e) => { s.ttlDays = Math.max(1, +e.target.value || 30); persist(); });
+    on('#sBase', (e) => { s.basemap = e.target.value; const b = BASEMAPS[s.basemap]; map.setTileUrl(b.url, b.sub); placeAttr(); persist(); });
+    $('#sOp').oninput = (e) => { s.heatOpacity = +e.target.value; map.redraw(); persist(); };
+    $('#sClear').onclick = async () => { await cache.clear(); state.store.clear(); toast('Downloaded data cleared'); remodel(); };
+  }
+
+  function renderHelp() {
+    $('#p-help').innerHTML = `<h3>How it works</h3>
+      <p class="small">The game decides a seedling's decor from the map <b>cell</b> it was found in. The detector looks at every cell whose <b>centre</b> is within <b>100 m</b> of you and shows the decor types in those cells. One seedling is always one of the shown types. So if only one type is in range, that seedling is guaranteed to be that type.</p>
+      <p class="small">This tool downloads OpenStreetMap places for the area (one combined query per ~1 km tile, cached on your device). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there.</p>
+      <h3>Colours</h3>
+      <p class="small"><b style="color:${LEVEL_COLORS[0]}">Green</b>: only your decor type in range. <b style="color:#a16207">Yellow</b>/<b style="color:${LEVEL_COLORS[2]}">orange</b>/<b style="color:${LEVEL_COLORS[3]}">red</b>: 1/2/3+ other types too. Uncoloured: your type is out of range. Cells with your type are outlined green; other decor cells are grey.</p>
+      <h3>Tips in the game</h3>
+      <ul class="small">
+        <li>The detector's icon list stays fixed until you move <b>25 m</b> from where it last scanned. Open the detector only once you're standing in the green zone. If the icons look stale, walk 25 m away and come back.</li>
+        <li>Check the icons the game shows before using the detector. If only your type appears, you're set.</li>
+        <li>Choose spots with a big safe zone so GPS drift doesn't push you out.</li>
+      </ul>
+      <h3>Limits</h3>
+      <ul class="small">
+        <li>The game also uses Foursquare and maybe other sources, so some decor places aren't in OSM. The game also updates its map copy only occasionally (most recently October 2026).</li>
+        <li>The cell grid and the polygon rules aren't published. Use <b>Calibrate</b> to log real detector readings and test which model matches.</li>
+        <li>Weather and event decor don't depend on location and aren't covered.</li>
+      </ul>
+      <p class="muted small">Data © OpenStreetMap contributors (ODbL), via the Overpass API. Tag mapping from Pikipedia's Decor Pikmin page. Unofficial fan tool; not affiliated with Niantic or Nintendo.</p>`;
+  }
+
+  // ---- picker ----
+  function openPicker() {
+    $('#picker').classList.add('on');
+    const s = $('#pickSearch'); s.value = ''; renderPicker(''); setTimeout(() => s.focus(), 50);
+  }
+  function renderPicker(q) {
+    const counts = new Map();
+    if (state.index) for (const c of state.index.cells.values()) for (const id of c.cats) counts.set(id, (counts.get(id) || 0) + 1);
+    q = q.toLowerCase();
+    const items = E.CATEGORIES.filter((c) => !q || c.name.toLowerCase().includes(q) || c.tags.some(([k, v]) => (k + '=' + v).includes(q)) || c.cuisine.some((x) => x.includes(q)))
+      .slice().sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0) || a.index - b.index);
+    $('#pickList').innerHTML = (state.target ? `<button class="pi" data-id=""><span class="ico">🗺️</span><span>Explore all (no target)</span></button>` : '') +
+      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${c.icon}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/')] : [])].join(', '))}</span></span>
+        <span class="cnt">${counts.get(c.id) ? `<b>${counts.get(c.id)}</b> in view` : ''}</span></button>`).join('');
+    $('#pickList').querySelectorAll('.pi').forEach((b) => b.onclick = () => { $('#picker').classList.remove('on'); setTarget(b.dataset.id || null); });
+  }
+  function setTarget(id) {
+    state.target = id;
+    runTarget(); persist(); renderAll(); map.redraw(); showTab('spots');
+    if (map.zoom < MIN_LOAD_ZOOM) toast('Zoom in to search');
+    analyze();
+  }
+
+  // ---- tabs + sheet ----
+  function showTab(name) {
+    state.tab = name;
+    document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+    document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('on', p.id === 'p-' + name));
+    if (name === 'calibrate') renderCalibrate();
+    if (name === 'settings') renderSettings();
+    if (innerWidth < 900 && sheetFrac < 0.3) setSheet(0.42);
+  }
+  let sheetFrac = 0.42;
+  function setSheet(f) {
+    sheetFrac = Math.max(0.12, Math.min(0.88, f));
+    document.documentElement.style.setProperty('--sheet-h', (sheetFrac * 100).toFixed(1) + 'vh');
+    placeAttr();
+  }
+  (function bindGrab() {
+    const g = $('#grab'); let start = null;
+    g.addEventListener('pointerdown', (e) => { g.setPointerCapture(e.pointerId); start = { y: e.clientY, f: sheetFrac, moved: false }; });
+    g.addEventListener('pointermove', (e) => { if (!start) return; const dy = e.clientY - start.y; if (Math.abs(dy) > 4) start.moved = true; setSheet(start.f - dy / innerHeight); });
+    g.addEventListener('pointerup', () => { if (start && !start.moved) setSheet(sheetFrac > 0.3 ? 0.14 : 0.42); start = null; });
+  })();
+
+  // ---- geolocation ----
+  function locate(cb) {
+    if (!navigator.geolocation) { toast('Location is not available in this browser'); return; }
+    navigator.geolocation.getCurrentPosition((p) => {
+      const pos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+      state.me = pos; cb(pos); map.redraw();
+    }, (err) => toast('Location error: ' + err.message), { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+  }
+  let watchId = null;
+  function toggleLive() {
+    state.live = !state.live;
+    $('#btnLive').classList.toggle('on', state.live);
+    if (!state.live) { if (watchId != null) navigator.geolocation.clearWatch(watchId); watchId = null; toast('Live detector off'); return; }
+    if (!navigator.geolocation) { toast('Location is not available'); state.live = false; $('#btnLive').classList.remove('on'); return; }
+    toast('Live detector on: following your GPS');
+    let first = true;
+    watchId = navigator.geolocation.watchPosition((p) => {
+      state.me = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+      const sx = map.toScreen(state.me.lat, state.me.lon);
+      if (first || sx[0] < map.w * 0.2 || sx[0] > map.w * 0.8 || sx[1] < map.h * 0.15 || sx[1] > map.h * 0.6) {
+        map.setView(state.me.lat, state.me.lon, first ? Math.max(map.zoom, 17) : null);
+        first = false;
+      }
+      setProbe(state.me.lat, state.me.lon, false).then(() => {
+        const d = state.probeDet;
+        if (d && state.target) {
+          const only = d.shown.length === 1 && d.shown[0] === state.target;
+          setStatus(only ? `✅ Here: only ${E.CAT[state.target].icon} ${html(E.CAT[state.target].name)}` : `Here: ${d.roadside ? E.ROADSIDE.icon : d.shown.map((id) => E.CAT[id].icon).join(' ')}`);
+        }
+      });
+    }, (err) => toast('Location error: ' + err.message), { enableHighAccuracy: true, maximumAge: 2000 });
+  }
+
+  function copyText(t) {
+    const done = () => toast('Copied');
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, () => fallback());
+    else fallback();
+    function fallback() {
+      const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { toast('Copy failed: select and copy manually'); }
+      ta.remove();
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Wire up
+  // --------------------------------------------------------------------------
+  $('#pick').onclick = openPicker;
+  $('#pickClose').onclick = () => $('#picker').classList.remove('on');
+  $('#picker').onclick = (e) => { if (e.target.id === 'picker') $('#picker').classList.remove('on'); };
+  $('#pickSearch').oninput = (e) => renderPicker(e.target.value);
+  document.querySelectorAll('#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.tab));
+  $('#btnLocate').onclick = () => locate((pos) => { frame(pos.lat, pos.lon, Math.max(map.zoom, 16.5)); });
+  $('#btnLive').onclick = toggleLive;
+  $('#btnCells').classList.toggle('on', state.settings.showCells);
+  $('#btnHeat').classList.toggle('on', state.settings.showHeat);
+  $('#btnCells').onclick = () => { state.settings.showCells = !state.settings.showCells; $('#btnCells').classList.toggle('on', state.settings.showCells); persist(); map.redraw(); };
+  $('#btnHeat').onclick = () => { state.settings.showHeat = !state.settings.showHeat; $('#btnHeat').classList.toggle('on', state.settings.showHeat); persist(); renderLegend(); map.redraw(); };
+  addEventListener('resize', placeAttr);
+
+  setSheet(innerWidth < 900 ? 0.42 : 0.42);
+  renderHelp(); renderSettings(); renderAll();
+  if (!saved.view) toast('Tap ◎ to jump to your location', 4000);
+  analyze();
+  window.PBApp = { state, map, analyze, setTarget, setProbe };
+})();
+
+</script>
+</body>
+</html>
