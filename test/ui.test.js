@@ -22,7 +22,7 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
     const errors = [];
     page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
     page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-    let overpassCalls = 0, tileCalls = 0, photonDown = false;
+    let overpassCalls = 0, tileCalls = 0, photonDown = false, aroundBusy = false;
     const geoCalls = { photon: 0, nominatim: 0 };
     const busyFirst = vp.name === 'desktop';
     await page.route('**/*', async (route) => {
@@ -55,6 +55,8 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
       }
       if (u.includes('/api/interpreter')) {
         overpassCalls++;
+        const pd = decodeURIComponent((route.request().postData() || '').replace(/^data=/, '').replace(/\+/g, ' '));
+        if (aroundBusy && pd.includes('around:')) return route.fulfill({ status: 504, body: 'busy' });
         if (busyFirst && overpassCalls === 1) return route.fulfill({ status: 429, body: 'rate limited' });
         const body = decodeURIComponent(route.request().postData().replace(/^data=/, '').replace(/\+/g, ' '));
         return route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(F.respond(body)) });
@@ -122,11 +124,35 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
     await page.click('.pi[data-id="sushi"]');
     const t0 = Date.now();
     if (busyFirst) {
-      await page.waitForFunction(() => /cuisine server busy/.test(document.querySelector('#status').textContent), null, { timeout: 15000 });
+      await page.waitForFunction(() => /extra-data server busy/.test(document.querySelector('#status').textContent), null, { timeout: 15000 });
       await page.screenshot({ path: `${OUT}/${vp.name}-7-cuisine-busy.png` });
     }
     await page.waitForFunction(() => [...window.PBApp.state.index.cells.values()].some((c) => c.cats.includes('sushi')), null, { timeout: 90000 });
     const sushiWait = Math.round((Date.now() - t0) / 1000);
+
+    // deep search for a rare type: Appliances Store, from 650 m west of centre
+    const deep = async () => {
+      await page.click('#tabs button[data-tab="spots"]');
+      await page.evaluate(([la, lo]) => window.PBApp.map.setView(la, lo, 16.5), F.P(-650, -300));
+      await page.waitForTimeout(700);
+      await page.click('#pick'); await page.fill('#pickSearch', 'appliance'); await page.click('.pi[data-id="appliances"]');
+      await page.waitForTimeout(500);
+      await page.click('#findNearest');
+      await page.waitForFunction(() => { const n = window.PBApp.state.nearest; return n && !n.busy; }, null, { timeout: 120000 });
+      await page.waitForTimeout(1500);
+      return page.evaluate(() => {
+        const n = window.PBApp.state.nearest, m = window.PBApp.map;
+        if (n.error) return { error: n.error };
+        if (!n.spot) return { none: true, note: n.note };
+        const pr = window.PBApp.state.probe;
+        return { name: n.spot.name, level: n.spot.level, d: Math.round(n.spot.distance), note: !!n.note,
+          probeAtSpot: !!pr && Math.abs(pr.lat - n.spot.lat) < 1e-9, spotOnScreen: (([x, y]) => x > 0 && y > 0 && x < m.w && y < m.h)(m.toScreen(n.spot.lat, n.spot.lon)) };
+      });
+    };
+    if (vp.name === 'desktop') { aroundBusy = true; await new Promise((r) => setTimeout(r, 31000)); } // let any cooldown pass, then make the list query fail
+    const deepResult = await deep();
+    await page.screenshot({ path: `${OUT}/${vp.name}-9-deep.png` });
+    aroundBusy = false;
 
     // address search: results list → pick one
     await page.evaluate(() => window.PBApp.map.setView(10, 10, 16));
@@ -162,7 +188,7 @@ const HTML = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
     await page.waitForTimeout(700);
     const zoomMsg = await page.textContent('#status');
 
-    results.push({ vp: vp.name, tileCalls, overpassCalls, spots: spots.slice(0, 4), badge, det2, calTop, nearest, sushiWait, search, zoomMsg, errors: errors.filter((e) => !/429/.test(e)) });
+    results.push({ vp: vp.name, tileCalls, overpassCalls, spots: spots.slice(0, 4), badge, det2, calTop, nearest, sushiWait, deepResult, search, zoomMsg, errors: errors.filter((e) => !/429/.test(e)) });
     await ctx.close();
   }
   await browser.close();

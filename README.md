@@ -12,12 +12,15 @@ Location data comes from OpenStreetMap, served as vector tiles by [OpenFreeMap](
   cell whose centre is within **100 m** of you (Pikipedia, "Detector").
 - The app loads OpenFreeMap's z14 vector tiles (OpenMapTiles schema): free, CDN-cached and
   without rate limits. The same tiles draw the base map.
-- OpenMapTiles has no `cuisine` tag, so Sushi/Italian/Ramen/Curry/Mexican/Korean use a small
-  Overpass lookup, sent only when needed: one request at a time, and 30 s+ back-off on any "busy" answer.
+- OpenMapTiles drops `cuisine=*` and `shop=appliance|pastry|craft`, so Sushi, Italian, Ramen, Curry,
+  Mexican, Korean, Sweetshop, Appliances Store and Stationery Store use a small Overpass top-up,
+  sent only when needed: one request at a time, and 30 s+ back-off on any "busy" answer.
 - It works out each cell's decor types and tests points every few metres. Each point
   is coloured by how many *other* types would show alongside your chosen one.
 - Green = only your type, so the decor is guaranteed if the map data matches the game.
-- **Find nearest** searches outward (0.5 → 3 km) for the closest pure spot with a safety margin.
+- **Find nearest** (deep search): checks everything within 2 km, then lists every place of the type
+  within 25 km with one Overpass query and checks them nearest-first until one has a pure spot.
+  If Overpass is busy (or the type is an area like Park), it scans map squares outward up to 15 km instead.
 - **🔍 Search** jumps to an address, place or `lat, lon` (Photon geocoder, Nominatim as backup; submit-only, ≤1 request/s).
 
 The cell grid isn't published. The default is **S2 level 17**: about 6 of those cells

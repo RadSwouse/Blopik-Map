@@ -139,8 +139,12 @@ test('cuisine top-up query + parse', () => {
   const q = E.cuisineQuery(tileKey);
   assert(q.includes('[timeout:25]') && q.includes('nwr["cuisine"~'));
   let n = 0;
-  for (const k of store.tiles.keys()) { const pts = E.parseCuisine(F.respond(E.cuisineQuery(k)), k); n += pts.length; assert(pts.every((p) => p.cuisineOnly)); store.setCuisine(k, pts); }
-  assert.strictEqual(n, 2, 'both cuisine places found exactly once');
+  for (const k of store.tiles.keys()) { const pts = E.parseCuisine(F.respond(E.cuisineQuery(k)), k); n += pts.length; assert(pts.every((p) => p.topup)); store.setCuisine(k, pts); }
+  assert(n >= 3, 'cuisine + missing-shop places found: ' + n);
+  const all = [...store.tiles.values()].flatMap((t) => t.topup || []);
+  assert(all.some((p) => p.tags.shop === 'pastry'), 'pastry top-up');
+  assert(!all.some((p) => p.tags.shop === 'electronics'), 'electronics is not a top-up (already in OpenMapTiles)');
+  assert.deepStrictEqual(E.catsFor(E.topupTags({ shop: 'appliance' }), 'node', 'point', O, 47, -122), ['appliances']);
 });
 
 console.log('Cells, detector, isolation');
@@ -169,6 +173,8 @@ test('build cell index (S2 L17)', () => {
   console.log('        typed cells:', idx.cells.size, 'in', ms, 'ms', JSON.stringify(counts));
   assert(counts.park >= 6 && counts.waterside >= 10 && counts.cafe === 1 && counts.bus_stop >= 5);
   assert(counts.sushi === 1, 'cuisine top-up merged');
+  assert(counts.sweetshop === 1, 'pastry shop (missing from OpenMapTiles) merged via top-up');
+  assert(counts.appliances >= 1, 'electronics shop from vector tiles');
   assert(counts.bridge >= 1 && [...idx.cells.values()].every((c) => !c.cats.includes('bridge') || c.src.every((x) => x.cat !== 'bridge' || x.name === 'Big Bridge')), 'only the named bridge');
 });
 test('detector inside the park', () => {
@@ -219,6 +225,23 @@ test('nearestSpot finds the closest pure Park point with a safety margin', () =>
   const far = E.nearestSpot(ig3, from[0], from[1], 0, 40);
   assert(far.distance >= s.distance);
   console.log('        nearest pure park', Math.round(s.distance) + ' m', 'safe', Math.round(s.safe) + ' m');
+});
+test('deep-search candidates: one query, nearest first, top-up only for missing tags', () => {
+  const q = E.candidateQuery('appliances', F.LAT0, F.LON0, 20000);
+  assert(q.includes('around:20000') && q.includes('"shop"="appliance"') && q.includes('"shop"="electronics"'));
+  const c = E.parseCandidates(F.respond(q), 'appliances', F.LAT0, F.LON0);
+  assert.deepStrictEqual(c.map((x) => x.name), ['Phone Fix', 'Fridge World', 'Gadget Hut']);
+  assert(c[1].topupPoint && !c[0].topupPoint, 'only shop=appliance needs injecting');
+  assert.strictEqual(E.candidateQuery('park', 0, 0, 1000), null, 'area types use the tile scan');
+  const [x, y] = E.tileKeyFor(...F.P(2600, -200)).split('/').map(Number);
+  const tc = E.tileCandidates(E.vtileToRecord(E.decodeMVT(new Uint8Array(F.encodeTile(14, x, y))), x, y), 'appliances');
+  assert(tc.some((p) => p.name === 'Gadget Hut'));
+});
+test('store.prune keeps protected tiles', () => {
+  const st = new E.FeatureStore();
+  for (let i = 0; i < 10; i++) st.addTile({ key: i + '/0', points: [], areas: [], lines: [] });
+  st.prune(4, new Set(['0/0']));
+  assert.strictEqual(st.tiles.size, 4); assert(st.has('0/0') && st.has('9/0') && !st.has('1/0'));
 });
 test('nearest-first cap at maxShown', () => {
   const o = Object.assign({}, idx.opts, { maxShown: 1 });

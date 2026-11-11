@@ -4,7 +4,7 @@
 (function (root) {
   'use strict';
 
-  const ENGINE_VERSION = '2.0.0';
+  const ENGINE_VERSION = '2.2.0';
   const DEG = Math.PI / 180;
   const R_EARTH = 6371008.8;
   const M_PER_DEG_LAT = R_EARTH * DEG; // ~111195 m
@@ -448,7 +448,7 @@
   /** Convert a decoded z14 tile into the compact record the analysis uses. */
   function vtileToRecord(layers, x, y) {
     const t = tileInfo(x + '/' + y);
-    const rec = { key: t.key, x, y, bbox: t.bbox, center: t.center, points: [], areas: [], lines: [], cuisine: null };
+    const rec = { key: t.key, x, y, bbox: t.bbox, center: t.center, points: [], areas: [], lines: [], topup: null };
     const n = Math.pow(2, DATA_Z);
     const toLL = (ext, px, py) => {
       const lon = ((x + px / ext) / n) * 360 - 180;
@@ -511,24 +511,81 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Cuisine top-up from Overpass (OpenMapTiles has no cuisine tag).
-  // One light query per z14 tile, only when a cuisine decor is needed.
+  // Top-up from Overpass for tags OpenMapTiles drops: cuisine=*, and
+  // shop=appliance / pastry / craft (checked against openmaptiles/layers/poi/mapping.yaml).
   // ---------------------------------------------------------------------------
   const CUISINE_VALUES = [...new Set(CATEGORIES.flatMap((c) => c.cuisine))];
-  function cuisineQuery(tileKey) {
+  const TOPUP_SHOPS = ['appliance', 'pastry', 'craft'];
+  const TOPUP_CATS = new Set(CATEGORIES.filter((c) => c.cuisine.length || c.tags.some(([k, v]) => k === 'shop' && TOPUP_SHOPS.includes(v))).map((c) => c.id));
+  function topupQuery(tileKey) {
     const b = tileInfo(tileKey).bbox;
     const bb = [b.s, b.w, b.n, b.e].map((v) => v.toFixed(6)).join(',');
-    return `[out:json][timeout:25];nwr["cuisine"~"${CUISINE_VALUES.join('|')}"](${bb});out tags center qt;`;
+    return `[out:json][timeout:25];(nwr["cuisine"~"${CUISINE_VALUES.join('|')}"](${bb});nwr["shop"~"^(${TOPUP_SHOPS.join('|')})$"](${bb}););out tags center qt;`;
   }
-  function parseCuisine(json, tileKey) {
+  /** Keep only the tags OpenMapTiles lacks, so top-up points never double-count. */
+  function topupTags(t) {
+    const out = { _src: 'overpass top-up' };
+    if (t.name) out.name = t.name;
+    if (t.cuisine) out.cuisine = t.cuisine;
+    if (t.amenity === 'restaurant' || t.amenity === 'fast_food') out._amenity = t.amenity;
+    if (TOPUP_SHOPS.includes(t.shop)) out.shop = t.shop;
+    return out;
+  }
+  function elementsToPoints(json, prefix) {
     if (!json || !Array.isArray(json.elements)) throw new Error('Unexpected Overpass response');
     if (json.remark && /error/i.test(json.remark)) throw new Error('Overpass: ' + json.remark);
-    const b = tileInfo(tileKey).bbox, out = [];
+    const out = [];
     for (const el of json.elements) {
       const lat = el.lat != null ? el.lat : el.center && el.center.lat;
       const lon = el.lon != null ? el.lon : el.center && el.center.lon;
-      if (lat == null || !bboxContains(b, lat, lon)) continue;
-      out.push({ id: 'cu:' + el.type[0] + el.id, et: 'node', lat, lon, tags: Object.assign({ _src: 'overpass cuisine' }, el.tags || {}), cuisineOnly: true });
+      if (lat == null) continue;
+      out.push({ id: prefix + el.type[0] + el.id, et: 'node', lat, lon, tags: el.tags || {} });
+    }
+    return out;
+  }
+  function parseTopup(json, tileKey) {
+    const b = tileInfo(tileKey).bbox;
+    return elementsToPoints(json, 'tu:').filter((p) => bboxContains(b, p.lat, p.lon))
+      .map((p) => Object.assign(p, { tags: topupTags(p.tags), topup: true }));
+  }
+  // Back-compat names used by older tests/UI
+  const cuisineQuery = topupQuery, parseCuisine = parseTopup;
+
+  /** One Overpass query listing every place of a point decor type around a spot. */
+  function candidateQuery(target, lat, lon, radiusM) {
+    const c = CAT[target];
+    if (!c || c.kind !== 'point') return null;
+    const around = `(around:${Math.round(radiusM)},${lat.toFixed(5)},${lon.toFixed(5)})`;
+    const parts = c.tags.map(([k, v]) => `nwr["${k}"="${v}"]${around};`);
+    if (c.cuisine.length) parts.push(`nwr["cuisine"~"${c.cuisine.join('|')}"]${around};`);
+    return `[out:json][timeout:25];(${parts.join('')});out tags center qt;`;
+  }
+  /** Candidate places for the target (sorted nearest first). Places whose tag
+   *  OpenMapTiles lacks are returned with topup:true so they can be added to the store. */
+  function parseCandidates(json, target, lat, lon, opts) {
+    opts = Object.assign({}, DEFAULT_OPTS, opts || {});
+    const out = [];
+    for (const p of elementsToPoints(json, 'cand:')) {
+      if (!catsFor(p.tags, 'node', 'point', opts, p.lat, p.lon).includes(target)) continue;
+      const tt = topupTags(p.tags);
+      const viaTopup = catsFor(tt, 'node', 'point', opts, p.lat, p.lon).includes(target);
+      out.push({ lat: p.lat, lon: p.lon, name: p.tags.name || '', d: distM(lat, lon, p.lat, p.lon),
+        topupPoint: viaTopup ? { id: 'tu:' + p.id.slice(5), et: 'node', lat: p.lat, lon: p.lon, tags: tt, topup: true } : null });
+    }
+    return out.sort((a, b) => a.d - b.d);
+  }
+  /** Target places in an already-loaded/converted tile record (for the tile-scan fallback). */
+  function tileCandidates(rec, target, opts) {
+    opts = Object.assign({}, DEFAULT_OPTS, opts || {});
+    const out = [];
+    for (const p of rec.points) if (catsFor(p.tags, p.et, 'point', opts, p.lat, p.lon).includes(target)) out.push({ lat: p.lat, lon: p.lon, name: p.tags.name || '' });
+    for (const a of rec.areas) {
+      if (!catsFor(a.tags, a.et, 'area', opts, (a.bbox.s + a.bbox.n) / 2, (a.bbox.w + a.bbox.e) / 2).includes(target)) continue;
+      out.push({ lat: (a.bbox.s + a.bbox.n) / 2, lon: (a.bbox.w + a.bbox.e) / 2, bbox: a.bbox, name: a.tags.name || '' });
+    }
+    for (const l of rec.lines) {
+      if (!catsFor(l.tags, l.et, 'line', opts, l.segs[0], l.segs[1]).includes(target)) continue;
+      out.push({ lat: l.segs[0], lon: l.segs[1], name: l.tags.name || '' });
     }
     return out;
   }
@@ -538,19 +595,35 @@
   // tiles clip polygons per tile), so an inside-test uses the point's own tile.
   // ---------------------------------------------------------------------------
   class FeatureStore {
-    constructor() { this.tiles = new Map(); this.version = 0; this._idx = null; }
-    addTile(tile) { this.tiles.set(tile.key, tile); this.version++; this._idx = null; }
-    setCuisine(key, points) { const t = this.tiles.get(key); if (t) { t.cuisine = points; this.version++; this._idx = null; } }
+    constructor() { this.tiles = new Map(); this.extra = new Map(); this.version = 0; this._idx = null; }
+    addTile(tile) { this.tiles.delete(tile.key); this.tiles.set(tile.key, tile); this.version++; this._idx = null; }
+    setTopup(key, points) { const t = this.tiles.get(key); if (t) { t.topup = points; this.version++; this._idx = null; } }
+    setCuisine(key, points) { this.setTopup(key, points); }
+    /** Extra top-up points not tied to a tile (from deep-search candidate queries). */
+    addExtra(points) { let n = 0; for (const p of points) if (!this.extra.has(p.id)) { this.extra.set(p.id, p); n++; } if (n) { this.version++; this._idx = null; } }
     has(key) { return this.tiles.has(key); }
-    hasCuisine(key) { const t = this.tiles.get(key); return !!(t && t.cuisine); }
-    clear() { this.tiles.clear(); this.version++; this._idx = null; }
+    hasTopup(key) { const t = this.tiles.get(key); return !!(t && t.topup); }
+    hasCuisine(key) { return this.hasTopup(key); }
+    clear() { this.tiles.clear(); this.extra.clear(); this.version++; this._idx = null; }
+    /** Drop least-recently-added tiles beyond max, never dropping keys in keep. */
+    prune(max, keep) {
+      if (this.tiles.size <= max) return;
+      for (const k of [...this.tiles.keys()]) {
+        if (this.tiles.size <= max) break;
+        if (!keep || !keep.has(k)) this.tiles.delete(k);
+      }
+      this.version++; this._idx = null;
+    }
     tileAt(lat, lon) { return this.tiles.get(tileKeyFor(lat, lon)); }
     index() {
       if (this._idx) return this._idx;
       const points = [], lines = [];
+      const seenTopup = new Set();
+      for (const t of this.tiles.values()) if (t.topup) for (const p of t.topup) seenTopup.add(p.id);
+      for (const p of this.extra.values()) if (!seenTopup.has(p.id)) points.push(p);
       for (const t of this.tiles.values()) {
         for (const p of t.points) points.push(p);
-        if (t.cuisine) for (const p of t.cuisine) points.push(p);
+        if (t.topup) for (const p of t.topup) points.push(p);
         for (const l of t.lines) lines.push(l);
       }
       const B = 0.002, pb = new Map();
@@ -632,12 +705,12 @@
     const frame = expandBBox(bbox, grid.edge);
     // points (cuisine top-up points only contribute cuisine decor)
     const pts = store.pointsIn(frame);
-    const cuisinePts = pts.filter((p) => p.cuisineOnly);
+    const cuisinePts = pts.filter((p) => p.topup && p.tags.cuisine);
     const suppressed = new Set();
     if (opts.cuisineMode === 'specific' && cuisinePts.length) {
       // the vector-tile copy of a cuisine place loses its generic Restaurant/Burger decor
       for (const p of pts) {
-        if (p.cuisineOnly || !(p.tags.amenity === 'restaurant' || p.tags.amenity === 'fast_food')) continue;
+        if (p.topup || !(p.tags.amenity === 'restaurant' || p.tags.amenity === 'fast_food')) continue;
         for (const q of cuisinePts) {
           if (distM(p.lat, p.lon, q.lat, q.lon) < 40 && (!p.tags.name || !q.tags.name || p.tags.name === q.tags.name) && catsOf(q, 'point').length) { suppressed.add(p.id); break; }
         }
@@ -645,7 +718,7 @@
     }
     for (const p of pts) {
       let cats = catsOf(p, 'point');
-      if (p.cuisineOnly) cats = cats.filter((id) => CAT[id].cuisine.length);
+      if (p.topup) cats = cats.filter((id) => TOPUP_CATS.has(id));
       if (suppressed.has(p.id)) cats = cats.filter((id) => !CAT[id].generic);
       if (cats.length) add(grid.keyOf(p.lat, p.lon), cats, p);
     }
@@ -955,6 +1028,7 @@
     rayInside, segCross,
     DATA_Z, tileKeyFor, tileInfo, tilesForBBox, lonToTileX, latToTileY, tileXToLon, tileYToLat,
     decodeMVT, vtileToRecord, poiTags, cuisineQuery, parseCuisine, CUISINE_VALUES,
+    TOPUP_SHOPS, TOPUP_CATS, topupQuery, parseTopup, topupTags, candidateQuery, parseCandidates, tileCandidates,
     FeatureStore, buildCellIndex, detect, isolationGrid, findRegions, rankSpots, nearestSpot, distanceTransform,
     modelVariants, describeModel, predictAt, scoreReading, evaluateModels,
   };

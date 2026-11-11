@@ -24,6 +24,8 @@ poi(-180, 60, 'fast_food', 'fast_food', 'Burger Hut');
 poi(600, -100, 'shop', 'convenience', 'Quick Stop');
 poi(-470, 415, 'railway', 'station', 'Central Stn');
 poi(-300, 700, 'place_of_worship', 'christian', 'Church'); // not a decor outside Japan
+poi(2600, -200, 'shop', 'electronics', 'Gadget Hut'); // in OpenMapTiles
+poi(-245, -115, 'shop', 'electronics', 'Phone Fix');  // in OpenMapTiles, next to the sushi place
 for (let x = -600; x <= 600; x += 200) poi(x, -40, 'bus', 'bus_stop');
 // roads (basemap) and bridges
 W.transportation.push({ type: 2, tags: { class: 'primary' }, parts: [[P(-3000, -40), P(3000, -40)]] });
@@ -131,15 +133,30 @@ function tileResponse(z, x, y, gzip) {
 
 // ---- fake Overpass (cuisine top-up only) ------------------------------------
 const cuisineNodes = [
+  { type: 'node', id: 9003, lat: P(1500, 1200)[0], lon: P(1500, 1200)[1], tags: { shop: 'appliance', name: 'Fridge World' } }, // NOT in OpenMapTiles
+  { type: 'node', id: 9004, lat: P(-400, 500)[0], lon: P(-400, 500)[1], tags: { shop: 'pastry', name: 'Petit Four' } },        // NOT in OpenMapTiles
+  { type: 'node', id: 9005, lat: P(2600, -200)[0], lon: P(2600, -200)[1], tags: { shop: 'electronics', name: 'Gadget Hut' } },
+  { type: 'node', id: 9006, lat: P(-245, -115)[0], lon: P(-245, -115)[1], tags: { shop: 'electronics', name: 'Phone Fix' } },
   { type: 'node', id: 9001, lat: P(-250, -120)[0], lon: P(-250, -120)[1], tags: { amenity: 'restaurant', cuisine: 'sushi;japanese', name: 'Sushi Go' } },
   { type: 'node', id: 9002, lat: P(-900, 300)[0], lon: P(-900, 300)[1], tags: { amenity: 'restaurant', cuisine: 'pizza', name: 'Slice' } },
 ];
 let overpassRequests = 0;
 function respond(query) {
   overpassRequests++;
+  const want = (n) => {
+    const t = n.tags;
+    const cu = /cuisine/.test(query) && t.cuisine && E.cuisineList(t).some((c) => query.includes(c));
+    const sh = t.shop && (query.includes(`"shop"="${t.shop}"`) || (query.includes('"shop"~') && query.includes(t.shop)));
+    return cu || sh;
+  };
+  const ar = query.match(/around:(\d+),(-?[\d.]+),(-?[\d.]+)/);
+  if (ar) {
+    const R = +ar[1], la = +ar[2], lo = +ar[3];
+    return { version: 0.6, generator: 'fixture', elements: cuisineNodes.filter((n) => want(n) && E.distM(la, lo, n.lat, n.lon) <= R) };
+  }
   const m = query.match(/\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)/);
   const b = { s: +m[1], w: +m[2], n: +m[3], e: +m[4] };
-  return { version: 0.6, generator: 'fixture', elements: cuisineNodes.filter((n) => E.bboxContains(b, n.lat, n.lon)) };
+  return { version: 0.6, generator: 'fixture', elements: cuisineNodes.filter((n) => want(n) && E.bboxContains(b, n.lat, n.lon)) };
 }
 
 module.exports = { LAT0, LON0, P, m2lat, m2lon, encodeTile, tileResponse, respond, counts: () => ({ tileRequests, overpassRequests }) };

@@ -80,18 +80,19 @@
   }
 
   // --------------------------------------------------------------------------
-  // Cuisine top-up from Overpass — polite: one request at a time, 30 s+ pause
-  // after any "busy" answer, give up after 3 failures (user can retry).
+  // Top-up from Overpass for data OpenFreeMap lacks (cuisine; appliance,
+  // pastry and craft shops) — polite: one request at a time, 30 s+ pause after
+  // any "busy" answer, give up after 3 failures (user can retry).
   // --------------------------------------------------------------------------
   const CUISINE_ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   const cuisineQ = { queue: [], running: false, cooldownUntil: 0, failures: 0, epIndex: 0, lastError: '', stopped: false };
   function needCuisine() {
     const m = state.settings.cuisine;
     if (m === 'never') return false;
-    return m === 'always' || !!(state.target && E.CAT[state.target].cuisine.length);
+    return m === 'always' || !!(state.target && E.TOPUP_CATS.has(state.target));
   }
   function queueCuisine(keys) {
-    for (const k of keys) if (state.store.has(k) && !state.store.hasCuisine(k) && !cuisineQ.queue.includes(k)) cuisineQ.queue.push(k);
+    for (const k of keys) if (state.store.has(k) && !state.store.hasTopup(k) && !cuisineQ.queue.includes(k)) cuisineQ.queue.push(k);
     runCuisine();
   }
   async function runCuisine() {
@@ -102,18 +103,18 @@
         const wait = cuisineQ.cooldownUntil - Date.now();
         if (wait > 0) { renderStatus(); await new Promise((r) => setTimeout(r, Math.min(wait, 1000))); continue; }
         const key = cuisineQ.queue[0];
-        if (state.store.hasCuisine(key)) { cuisineQ.queue.shift(); continue; }
+        if (state.store.hasTopup(key)) { cuisineQ.queue.shift(); continue; }
         const ep = CUISINE_ENDPOINTS[cuisineQ.epIndex % CUISINE_ENDPOINTS.length];
         renderStatus();
         try {
           const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 40000);
           let res;
           try {
-            res = await fetch(ep, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(E.cuisineQuery(key)) });
+            res = await fetch(ep, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(E.topupQuery(key)) });
           } finally { clearTimeout(timer); }
           if (!res.ok) throw new Error(ep.split('/')[2] + ' answered HTTP ' + res.status);
-          const pts = E.parseCuisine(await res.json(), key);
-          state.store.setCuisine(key, pts);
+          const pts = E.parseTopup(await res.json(), key);
+          state.store.setTopup(key, pts);
           cuisineQ.queue.shift(); cuisineQ.failures = 0; cuisineQ.lastError = '';
           scheduleAnalyze();
           await new Promise((r) => setTimeout(r, 1500)); // spacing between requests
@@ -293,10 +294,10 @@
     }
     if (needCuisine() && msg && !statusState.failed) {
       const left = cuisineQ.queue.length;
-      if (cuisineQ.stopped) { msg += ` · <span title="${html(cuisineQ.lastError)}">cuisine lookup failed</span> <button class="btn sm" id="retryCu">Retry</button>`; cls = 'warn'; }
+      if (cuisineQ.stopped) { msg += ` · <span title="${html(cuisineQ.lastError)}">extra lookup failed</span> <button class="btn sm" id="retryCu">Retry</button>`; cls = 'warn'; }
       else if (left) {
         const wait = Math.ceil((cuisineQ.cooldownUntil - Date.now()) / 1000);
-        msg += wait > 0 ? ` · cuisine server busy, retry in ${wait}s` : ` · loading cuisine data (${left} left)`;
+        msg += wait > 0 ? ` · extra-data server busy, retry in ${wait}s` : ` · loading extra data (${left} left)`;
         cls = 'busy';
       }
     }
@@ -447,13 +448,13 @@
     const ref = refPoint();
     let out = `<div class="row" style="justify-content:space-between"><h3>${ic(c.id)} ${html(c.name)}</h3><span class="muted small">${nCells} cell${nCells === 1 ? '' : 's'} in view</span></div>`;
     out += nearestHtml();
-    const cuisinePending = c.cuisine.length && state.settings.cuisine !== 'never' && (cuisineQ.queue.length || cuisineQ.running);
+    const cuisinePending = E.TOPUP_CATS.has(c.id) && state.settings.cuisine !== 'never' && (cuisineQ.queue.length || cuisineQ.running);
     if (!nCells && cuisinePending) {
-      out += `<p class="muted">⏳ Loading cuisine data from the Overpass server. This can take a while when it's busy.</p>`;
+      out += `<p class="muted">⏳ Loading extra data for ${html(c.name)} from the Overpass server. This can take a while when it's busy.</p>`;
       el.innerHTML = out; bindNearest(el); return;
     }
-    if (!nCells && c.cuisine.length && (cuisineQ.stopped || state.settings.cuisine === 'never')) {
-      out += `<p class="muted">Cuisine data isn't available right now (${state.settings.cuisine === 'never' ? 'turned off in Settings' : 'the Overpass server is busy'}). Restaurants still count as 🍽️ Restaurant.</p>`;
+    if (!nCells && E.TOPUP_CATS.has(c.id) && (cuisineQ.stopped || state.settings.cuisine === 'never')) {
+      out += `<p class="muted">Extra data for ${html(c.name)} isn't available right now (${state.settings.cuisine === 'never' ? 'turned off in Settings' : 'the Overpass server is busy'}). Try <b>📍 Find nearest</b>, or retry later.</p>`;
       el.innerHTML = out; bindNearest(el); return;
     }
     if (!nCells) {
@@ -488,25 +489,33 @@
     bindNearest(el);
   }
 
-  // ---- find nearest ----
+  // ---- find nearest (with deep search) ----
+  // 1) one Overpass query lists every place of the type within 25 km (point types);
+  // 2) check the area around you exhaustively out to 2 km;
+  // 3) then check each listed place nearest-first until one has a pure spot.
+  //    If Overpass is busy (or the type is an area like Park), scan map squares
+  //    outward instead (up to 15 km).
   let nearestToken = 0;
+  const DEEP_MAX_OVERPASS = 25000, DEEP_MAX_TILES = 15000, LOCAL_MAX = 2000;
   function nearestHtml() {
     const n = state.nearest, c = E.CAT[state.target];
     let out = `<div class="row" style="margin:2px 0 8px"><button class="btn primary sm" id="findNearest" ${n && n.busy ? 'disabled' : ''}>📍 Find nearest</button>
-      <span class="muted small">${state.me ? 'from your location' : 'from the map centre (tap ◎ to use GPS)'}</span></div>`;
+      ${n && n.busy ? '<button class="btn sm" id="stopNearest">Stop</button>' : `<span class="muted small">${state.me ? 'from your location' : 'from the map centre (tap ◎ to use GPS)'}</span>`}</div>`;
     if (!n) return out;
     if (n.busy) return out + `<div class="card"><span class="muted small">⏳ ${html(n.msg)}</span></div>`;
     if (n.error) return out + `<div class="card"><span class="small">⚠️ ${html(n.error)}</span></div>`;
     const sp = n.spot;
-    if (!sp) return out + `<div class="card"><span class="small">No spot with ${ic(c.id)} ${html(c.name)} found within ${fmtDist(n.radius)}.</span></div>`;
+    const note = n.note ? `<div class="muted small" style="margin-top:6px">${html(n.note)}</div>` : '';
+    if (!sp) return out + `<div class="card"><span class="small">${n.stopped ? 'Search stopped.' : `No ${ic(c.id)} ${html(c.name)} spot found within ${fmtDist(n.radius)}.`}</span>${note}</div>`;
     const others = sp.level === 0 ? '' : ` (+${sp.level} other type${sp.level > 1 ? 's' : ''})`;
     return out + `<div class="card ${sp.level === 0 ? 'pure' : ''}"><div class="spot-h"><span class="num l${Math.min(3, sp.level)}">📍</span>
-      <span>${sp.level === 0 ? `Nearest spot with only ${ic(c.id)}` : `No pure spot within ${fmtDist(n.radius)}. Nearest with fewest others${others}`}</span></div>
-      <div class="muted small" style="margin:4px 0 8px">${fmtDist(sp.distance)} away · safe zone ±${Math.round(sp.safe)} m</div>
-      <div class="row"><button class="btn sm" id="nearShow">Show</button><a class="btn sm" href="${dirLink(sp.lat, sp.lon)}" target="_blank" rel="noopener">Walk there ↗</a></div></div>`;
+      <span>${sp.level === 0 ? `Nearest spot with only ${ic(c.id)}` : `No pure spot found${n.radius ? ' within ' + fmtDist(n.radius) : ''}. Nearest with fewest others${others}`}</span></div>
+      <div class="muted small" style="margin:4px 0 8px">${fmtDist(sp.distance)} away · safe zone ±${Math.round(sp.safe)} m${sp.name ? ' · near ' + html(sp.name) : ''}</div>
+      <div class="row"><button class="btn sm" id="nearShow">Show</button><a class="btn sm" href="${dirLink(sp.lat, sp.lon)}" target="_blank" rel="noopener">Walk there ↗</a></div>${note}</div>`;
   }
   function bindNearest(el) {
     const b = el.querySelector('#findNearest'); if (b) b.onclick = findNearest;
+    const st = el.querySelector('#stopNearest'); if (st) st.onclick = () => { nearestToken++; state.nearest = { stopped: true, spot: state.nearest && state.nearest.best || null }; renderSpots(); };
     const s2 = el.querySelector('#nearShow'); if (s2) s2.onclick = () => showNearest();
   }
   function showNearest() {
@@ -515,47 +524,131 @@
     frame(sp.lat, sp.lon, Math.max(map.zoom, 16.5));
     setProbe(sp.lat, sp.lon, false);
   }
+  /** One polite Overpass request (shares the top-up cooldown). */
+  async function overpassOnce(query) {
+    if (cuisineQ.cooldownUntil > Date.now()) throw new Error('Overpass busy (cooling down)');
+    const ep = CUISINE_ENDPOINTS[cuisineQ.epIndex % CUISINE_ENDPOINTS.length];
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 40000);
+    try {
+      const res = await fetch(ep, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(query) });
+      if (!res.ok) throw new Error(ep.split('/')[2] + ' answered HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      cuisineQ.epIndex++; cuisineQ.cooldownUntil = Date.now() + 30000;
+      throw e.name === 'AbortError' ? new Error('Overpass timed out') : e;
+    } finally { clearTimeout(timer); }
+  }
+  function better(a, b) { return !a ? b : !b ? a : (b.level < a.level || (b.level === a.level && b.distance < a.distance)) ? b : a; }
+  /** Analyse the neighbourhood of one candidate place. */
+  async function checkAround(t, origin, cand) {
+    let local = cand.bbox ? E.expandBBox(cand.bbox, 150) : E.expandBBox({ s: cand.lat, n: cand.lat, w: cand.lon, e: cand.lon }, 250);
+    const grid = E.getGrid(state.opts.grid);
+    if (E.distM(local.s, local.w, local.n, local.e) > 3000) local = E.expandBBox({ s: cand.lat, n: cand.lat, w: cand.lon, e: cand.lon }, 1000);
+    const keys = E.tilesForBBox(E.expandBBox(local, state.opts.radius + grid.edge + 40));
+    const errs = await ensureTiles(keys);
+    if (errs.length) return { err: errs[0] };
+    const idx = E.buildCellIndex(state.store, E.expandBBox(local, state.opts.radius), state.opts);
+    const ig = E.isolationGrid(idx, local, t, 15000);
+    let fb = null;
+    for (const lv of [1, 2, 3]) { fb = E.nearestSpot(ig, origin.lat, origin.lon, lv, 8); if (fb) break; }
+    const keep = new Set([...keys, ...E.tilesForBBox(viewBBox())]);
+    state.store.prune(70, keep);
+    return { pure: E.nearestSpot(ig, origin.lat, origin.lon, 0, 8), fb };
+  }
   async function findNearest() {
     const t = state.target; if (!t) return;
     const token = ++nearestToken;
     const origin = refPoint();
     const grid = E.getGrid(state.opts.grid);
-    const isCuisine = E.CAT[t].cuisine.length > 0;
-    const set = (o) => { if (token === nearestToken) { state.nearest = o; renderSpots(); } };
-    let fallback = null, R = 0;
+    const c = E.CAT[t];
+    let best = null;
+    const live = () => token === nearestToken;
+    const set = (o) => { if (live()) { state.nearest = Object.assign({ best }, o); renderSpots(); } };
+    const done = (spot, radius, note) => { set({ spot: spot ? Object.assign({}, spot) : null, radius, note }); if (spot) showNearest(); };
     try {
-      for (R of [500, 1000, 2000, 3000]) {
-        set({ busy: true, msg: `Searching within ${fmtDist(R)}…` });
-        const area = E.expandBBox({ s: origin.lat, n: origin.lat, w: origin.lon, e: origin.lon }, R);
-        const keys = E.tilesForBBox(E.expandBBox(area, state.opts.radius + grid.edge + 40));
-        const errs = await ensureTiles(keys, (d, n) => set({ busy: true, msg: `Searching within ${fmtDist(R)}… map data ${d}/${n}` }));
-        if (token !== nearestToken) return;
-        if (errs.length) throw new Error(`Couldn't load part of the map (${errs[0].message || errs[0]})`);
-        if (isCuisine && state.settings.cuisine !== 'never') {
-          queueCuisine(keys);
-          while (keys.some((k) => !state.store.hasCuisine(k)) && !cuisineQ.stopped) {
-            const left = keys.filter((k) => !state.store.hasCuisine(k)).length;
-            set({ busy: true, msg: `Searching within ${fmtDist(R)}… cuisine data ${keys.length - left}/${keys.length} (the cuisine server is slow)` });
-            await new Promise((r) => setTimeout(r, 1000));
-            if (token !== nearestToken) return;
-          }
-          if (cuisineQ.stopped) throw new Error('The cuisine server is too busy right now. Try again in a few minutes.');
+      // 1) candidate list from Overpass (one request) for point types
+      let cands = null, note = '';
+      const q = E.candidateQuery(t, origin.lat, origin.lon, DEEP_MAX_OVERPASS);
+      if (q && state.settings.cuisine !== 'never') {
+        set({ busy: true, msg: `Looking up every ${c.name} within ${fmtDist(DEEP_MAX_OVERPASS)}…` });
+        try {
+          cands = E.parseCandidates(await overpassOnce(q), t, origin.lat, origin.lon, state.opts);
+          state.store.addExtra(cands.filter((x) => x.topupPoint).map((x) => x.topupPoint));
+        } catch (e) {
+          note = `The place list server was busy (${e.message}), so this used a slower map scan${E.TOPUP_CATS.has(t) ? ' and may miss some ' + c.name + ' places' : ''}.`;
         }
+        if (!live()) return;
+        if (cands && !cands.length) { done(null, DEEP_MAX_OVERPASS, `OpenStreetMap lists no ${c.name} within ${fmtDist(DEEP_MAX_OVERPASS)} of here.`); return; }
+      }
+      // 2) exhaustive check near you
+      for (const R of [500, 1000, LOCAL_MAX]) {
+        if (cands && !cands.some((x) => x.d <= R + 150)) continue; // nothing of this type that close
+        set({ busy: true, msg: `Checking within ${fmtDist(R)}…` });
+        const area = E.expandBBox({ s: origin.lat, n: origin.lat, w: origin.lon, e: origin.lon }, R);
+        const errs = await ensureTiles(E.tilesForBBox(E.expandBBox(area, state.opts.radius + grid.edge + 40)), (d, n) => set({ busy: true, msg: `Checking within ${fmtDist(R)}… map data ${d}/${n}` }));
+        if (!live()) return;
+        if (errs.length) throw new Error(`Couldn't load part of the map (${errs[0].message || errs[0]})`);
         await new Promise((r) => setTimeout(r, 20));
         const idx = E.buildCellIndex(state.store, E.expandBBox(area, state.opts.radius), state.opts);
-        await new Promise((r) => setTimeout(r, 0));
         const ig = E.isolationGrid(idx, area, t, 150000);
         const pure = E.nearestSpot(ig, origin.lat, origin.lon, 0, 8);
-        if (pure && (pure.distance <= R || R === 3000)) { set({ spot: pure, radius: R }); showNearest(); return; }
-        if (!fallback) {
-          for (const lv of [1, 2, 3]) {
-            const f = E.nearestSpot(ig, origin.lat, origin.lon, lv, 8);
-            if (f && f.distance <= R) { fallback = f; break; }
-          }
+        if (pure && pure.distance <= R) { done(pure, R, note); return; }
+        for (const lv of [1, 2, 3]) { const f = E.nearestSpot(ig, origin.lat, origin.lon, lv, 8); if (f && f.distance <= R) { best = better(best, f); break; } }
+        state.store.prune(70, new Set(E.tilesForBBox(E.expandBBox(area, state.opts.radius + grid.edge + 40))));
+      }
+      // 3) deep search
+      const checked = [];
+      const tryCand = async (cand) => {
+        if (checked.some((p) => E.distM(p.lat, p.lon, cand.lat, cand.lon) < 150)) return null;
+        checked.push(cand);
+        const r = await checkAround(t, origin, cand);
+        if (r.err) throw new Error(`Couldn't load part of the map (${r.err.message || r.err})`);
+        if (r.fb) best = better(best, Object.assign(r.fb, { name: cand.name }));
+        return r.pure ? Object.assign(r.pure, { name: cand.name }) : null;
+      };
+      if (cands) {
+        const far = cands.filter((x) => x.d > LOCAL_MAX - 100);
+        for (let i = 0; i < far.length; i++) {
+          if (!live()) return;
+          set({ busy: true, msg: `Deep search: checking ${c.name} ${i + 1} of ${far.length} (${fmtDist(far[i].d)} away)…` });
+          const pure = await tryCand(far[i]);
+          if (!live()) return;
+          if (pure) { done(pure, DEEP_MAX_OVERPASS, note); return; }
+        }
+        done(best, DEEP_MAX_OVERPASS, note || `Checked all ${cands.length} ${c.name} places within ${fmtDist(DEEP_MAX_OVERPASS)}; none has a spot where it's the only type.`);
+        return;
+      }
+      // fallback: scan map squares in rings outward
+      const ox = E.lonToTileX(origin.lon, E.DATA_Z), oy = E.latToTileY(origin.lat, E.DATA_Z);
+      const tileM = (40075016 * Math.cos(origin.lat * Math.PI / 180)) / Math.pow(2, E.DATA_Z);
+      let scanned = 0;
+      for (let k = Math.max(1, Math.floor(LOCAL_MAX / tileM)); k * tileM <= DEEP_MAX_TILES; k++) {
+        const ring = [];
+        for (let dy = -k; dy <= k; dy++) for (let dx = -k; dx <= k; dx++) if (Math.max(Math.abs(dx), Math.abs(dy)) === k) ring.push([ox + dx, oy + dy]);
+        const found = [];
+        for (let i = 0; i < ring.length; i += 6) {
+          if (!live()) return;
+          set({ busy: true, msg: `Deep search: scanning ${fmtDist(k * tileM)} out (${scanned} map squares checked)…` });
+          await Promise.all(ring.slice(i, i + 6).map(async ([x, y]) => {
+            try {
+              const layers = await vt.get(E.DATA_Z, x, y);
+              const rec = E.vtileToRecord(layers || {}, x, y);
+              for (const cand of E.tileCandidates(rec, t, state.opts)) found.push(Object.assign(cand, { d: E.distM(origin.lat, origin.lon, cand.lat, cand.lon) }));
+            } catch (e) { /* skip a failed square */ }
+            scanned++;
+          }));
+        }
+        found.sort((a, b) => a.d - b.d);
+        for (const cand of found) {
+          if (cand.d <= LOCAL_MAX - 100) continue;
+          if (!live()) return;
+          set({ busy: true, msg: `Deep search: checking a ${c.name} ${fmtDist(cand.d)} away (${scanned} map squares scanned)…` });
+          const pure = await tryCand(cand);
+          if (!live()) return;
+          if (pure) { done(pure, Math.round(k * tileM), note); return; }
         }
       }
-      set({ spot: fallback, radius: R });
-      if (fallback) showNearest();
+      done(best, DEEP_MAX_TILES, note);
     } catch (e) {
       set({ error: e.message || String(e) });
     }
@@ -752,9 +845,9 @@
       <h3 style="margin-top:14px">Data</h3>
       <p class="small">Places, parks and water come from <b>OpenFreeMap</b> (OpenStreetMap data${vt.version ? `, extract of <b>${html(vt.version)}</b>` : ''}, refreshed weekly). The game refreshed its own map in October 2026, so places added to OSM since then can show here but not in the game.</p>
       <div class="kv">
-        <label for="sCuisine">Cuisine lookups</label><select id="sCuisine">${opt('auto', 'Only when a cuisine decor is chosen', s.cuisine)}${opt('always', 'Always (more accurate overlaps, slower)', s.cuisine)}${opt('never', 'Never', s.cuisine)}</select>
+        <label for="sCuisine">Extra lookups</label><select id="sCuisine">${opt('auto', 'Only when a decor that needs them is chosen', s.cuisine)}${opt('always', 'Always (more accurate overlaps, slower)', s.cuisine)}${opt('never', 'Never', s.cuisine)}</select>
       </div>
-      <p class="muted small">OpenFreeMap doesn't say which cuisine a restaurant serves. Sushi, Italian, Ramen, Curry, Mexican and Korean come from a small extra lookup on the public Overpass server, which is often busy. The app sends one request at a time and waits at least 30 s after a busy answer.</p>
+      <p class="muted small">OpenFreeMap's data leaves out restaurant cuisines and three shop types (appliance, pastry, craft). Sushi, Italian, Ramen, Curry, Mexican, Korean, Sweetshop, Appliances Store and Stationery Store therefore use a small extra lookup on the public Overpass server, which is often busy. The app sends one request at a time and waits at least 30 s after a busy answer. With "Always", other decor types also count these places as overlaps.</p>
       <div class="row"><button class="btn sm" id="sClear">Reload map data</button></div>
       <h3 style="margin-top:14px">Display</h3>
       <div class="kv">
@@ -779,7 +872,7 @@
   function renderHelp() {
     $('#p-help').innerHTML = `<h3>How it works</h3>
       <p class="small">The game decides a seedling's decor from the map <b>cell</b> it was found in. The detector looks at every cell whose <b>centre</b> is within <b>100 m</b> of you and shows the decor types in those cells. One seedling is always one of the shown types. So if only one type is in range, that seedling is guaranteed to be that type.</p>
-      <p class="small">This tool loads OpenStreetMap data for the area from OpenFreeMap's ready-made map files (fast, no limits). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there. <b>📍 Find nearest</b> searches outward from you (up to 3 km) for the closest spot where only your chosen type shows. <b>🔍</b> jumps to an address, place name or coordinates.</p>
+      <p class="small">This tool loads OpenStreetMap data for the area from OpenFreeMap's ready-made map files (fast, no limits). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there. <b>📍 Find nearest</b> finds the closest spot where only your chosen type shows. It checks everything within 2 km of you, then (deep search) goes through every place of that type within 25 km, nearest first, until one works; press Stop any time. <b>🔍</b> jumps to an address, place name or coordinates.</p>
       <h3>Colours</h3>
       <p class="small"><b style="color:${LEVEL_COLORS[0]}">Green</b>: only your decor type in range. <b style="color:#a16207">Yellow</b>/<b style="color:${LEVEL_COLORS[2]}">orange</b>/<b style="color:${LEVEL_COLORS[3]}">red</b>: 1/2/3+ other types too. Uncoloured: your type is out of range. Cells with your type are outlined green; other decor cells are grey.</p>
       <h3>Tips in the game</h3>
@@ -811,7 +904,7 @@
     const items = E.CATEGORIES.filter((c) => !q || c.name.toLowerCase().includes(q) || c.tags.some(([k, v]) => (k + '=' + v).includes(q)) || c.cuisine.some((x) => x.includes(q)))
       .slice().sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0) || a.index - b.index);
     $('#pickList').innerHTML = (state.target ? `<button class="pi" data-id=""><span class="ico">🗺️</span><span>Explore all (no target)</span></button>` : '') +
-      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${ic(c.id)}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/') + ' (extra lookup, can be slow)'] : [])].join(', '))}</span></span>
+      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${ic(c.id)}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/')] : [])].join(', ') + (E.TOPUP_CATS.has(c.id) ? ' · extra lookup, can be slow' : ''))}</span></span>
         <span class="cnt">${counts.get(c.id) ? `<b>${counts.get(c.id)}</b> in view` : ''}</span></button>`).join('');
     $('#pickList').querySelectorAll('.pi').forEach((b) => b.onclick = () => { $('#picker').classList.remove('on'); setTarget(b.dataset.id || null); });
   }
