@@ -4,7 +4,7 @@
 (function (root) {
   'use strict';
 
-  const ENGINE_VERSION = '1.0.0';
+  const ENGINE_VERSION = '2.0.0';
   const DEG = Math.PI / 180;
   const R_EARTH = 6371008.8;
   const M_PER_DEG_LAT = R_EARTH * DEG; // ~111195 m
@@ -202,7 +202,7 @@
       const N = 2 ** L;
       const edge = 9.22e6 / N; // average edge in metres
       g = {
-        id, label: GRID_LABELS[id] || id, edge, step: edge * 0.22,
+        id, label: GRID_LABELS[id] || id, edge, step: edge * 0.12,
         keyOf(lat, lon) {
           const [f, u, v] = latLngToFaceUV(lat, lon);
           let i = Math.floor(uvToST(u) * N), j = Math.floor(uvToST(v) * N);
@@ -295,15 +295,6 @@
     const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
     return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
   }
-  function refInsideTest(area, lat, lon) {
-    const [ry, rx] = area.ref;
-    let inside = area.refInside;
-    const s = area.segs;
-    for (let k = 0; k < s.length; k += 4) {
-      if (segCross(ry, rx, lat, lon, s[k], s[k + 1], s[k + 2], s[k + 3])) inside = !inside;
-    }
-    return inside;
-  }
   function segsBBox(segs) {
     let s = 90, n = -90, w = 180, e = -180;
     for (let k = 0; k < segs.length; k += 2) {
@@ -314,203 +305,260 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Overpass query + parse (one query per tile; all categories at once)
+  // Web-Mercator tile maths (OpenFreeMap serves z0–14; analysis uses z14)
   // ---------------------------------------------------------------------------
-  const TILE_DEG = 0.01;     // ~1.1 km tiles
-  const TILE_PAD_DEG = 0.0025; // ~250 m of extra data around each tile
-  const BIG_REL_M = 25000;   // relations longer than this come back clipped
-
-  function tileKeyFor(lat, lon) { return Math.floor(lat / TILE_DEG) + '_' + Math.floor(lon / TILE_DEG); }
+  const DATA_Z = 14;
+  function lonToTileX(lon, z) { return Math.floor(((lon + 180) / 360) * Math.pow(2, z)); }
+  function latToTileY(lat, z) {
+    const s = Math.sin(Math.max(-85.0511, Math.min(85.0511, lat)) * DEG);
+    return Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * Math.pow(2, z));
+  }
+  function tileXToLon(x, z) { return (x / Math.pow(2, z)) * 360 - 180; }
+  function tileYToLat(y, z) { const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z); return Math.atan(Math.sinh(n)) / DEG; }
+  function tileKeyFor(lat, lon) { return lonToTileX(lon, DATA_Z) + '/' + latToTileY(lat, DATA_Z); }
   function tileInfo(key) {
-    const [a, b] = key.split('_').map(Number);
-    const bbox = { s: a * TILE_DEG, w: b * TILE_DEG, n: (a + 1) * TILE_DEG, e: (b + 1) * TILE_DEG };
-    const pbox = { s: bbox.s - TILE_PAD_DEG, w: bbox.w - TILE_PAD_DEG, n: bbox.n + TILE_PAD_DEG, e: bbox.e + TILE_PAD_DEG };
-    return { key, bbox, pbox, center: [(bbox.s + bbox.n) / 2, (bbox.w + bbox.e) / 2] };
+    const [x, y] = key.split('/').map(Number);
+    const bbox = { s: tileYToLat(y + 1, DATA_Z), n: tileYToLat(y, DATA_Z), w: tileXToLon(x, DATA_Z), e: tileXToLon(x + 1, DATA_Z) };
+    return { key, x, y, z: DATA_Z, bbox, center: [(bbox.s + bbox.n) / 2, (bbox.w + bbox.e) / 2] };
   }
   function tilesForBBox(b) {
     const keys = [];
-    for (let a = Math.floor(b.s / TILE_DEG); a <= Math.floor(b.n / TILE_DEG); a++) {
-      for (let c = Math.floor(b.w / TILE_DEG); c <= Math.floor(b.e / TILE_DEG); c++) keys.push(a + '_' + c);
-    }
+    const x0 = lonToTileX(b.w, DATA_Z), x1 = lonToTileX(b.e, DATA_Z);
+    const y0 = latToTileY(b.n, DATA_Z), y1 = latToTileY(b.s, DATA_Z);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) keys.push(x + '/' + y);
     return keys;
   }
 
-  function groupTags(kinds, includeRegionJP) {
-    const g = {};
-    for (const c of CATEGORIES) {
-      if (!kinds.includes(c.kind)) continue;
-      if (c.region === 'JP' && !includeRegionJP) continue;
-      for (const [k, v] of c.tags) (g[k] = g[k] || new Set()).add(v);
+  // ---------------------------------------------------------------------------
+  // Mapbox Vector Tile (protobuf) decoder — just what we need, no dependencies
+  // ---------------------------------------------------------------------------
+  const utf8 = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+  class Pbf {
+    constructor(u8) { this.b = u8; this.p = 0; this.dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength); }
+    varint() {
+      let val = 0, mul = 1, byte;
+      do { byte = this.b[this.p++]; val += (byte & 0x7f) * mul; mul *= 128; } while (byte & 0x80);
+      return val;
     }
-    return g;
+    svarint() { const n = this.varint(); return n % 2 === 1 ? -(n + 1) / 2 : n / 2; }
+    string(len) { const s = utf8.decode(this.b.subarray(this.p, this.p + len)); this.p += len; return s; }
+    skip(wt) {
+      if (wt === 0) this.varint();
+      else if (wt === 1) this.p += 8;
+      else if (wt === 2) { const l = this.varint(); this.p += l; }
+      else if (wt === 5) this.p += 4;
+      else throw new Error('Bad wire type ' + wt);
+    }
   }
-  const esc = (s) => s.replace(/[\\"]/g, '\\$&');
-  function sel(type, key, vals, bb) {
-    const arr = [...vals];
-    if (arr.length === 1) return `${type}["${key}"="${esc(arr[0])}"](${bb});`;
-    return `${type}["${key}"~"^(${arr.map(esc).join('|')})$"](${bb});`;
+  function decodeValue(pbf, end) {
+    let v = null;
+    while (pbf.p < end) {
+      const tag = pbf.varint(), f = tag >> 3, wt = tag & 7;
+      if (f === 1) v = pbf.string(pbf.varint());
+      else if (f === 2) { v = pbf.dv.getFloat32(pbf.p, true); pbf.p += 4; }
+      else if (f === 3) { v = pbf.dv.getFloat64(pbf.p, true); pbf.p += 8; }
+      else if (f === 4 || f === 5) v = pbf.varint();
+      else if (f === 6) v = pbf.svarint();
+      else if (f === 7) v = !!pbf.varint();
+      else pbf.skip(wt);
+    }
+    return v;
+  }
+  /** Decode an MVT tile → { layerName: { extent, features: [{type, tags, parts}] } }.
+   *  parts: arrays of [x, y] in tile units; polygon rings are closed. */
+  function decodeMVT(u8) {
+    const pbf = new Pbf(u8), layers = {};
+    while (pbf.p < u8.length) {
+      const tag = pbf.varint(), f = tag >> 3, wt = tag & 7;
+      if (f !== 3 || wt !== 2) { pbf.skip(wt); continue; }
+      const end = pbf.varint() + pbf.p;
+      let name = '', extent = 4096;
+      const keys = [], values = [], raw = [];
+      while (pbf.p < end) {
+        const t2 = pbf.varint(), f2 = t2 >> 3, w2 = t2 & 7;
+        if (f2 === 1) name = pbf.string(pbf.varint());
+        else if (f2 === 2) { const l = pbf.varint(); raw.push([pbf.p, pbf.p + l]); pbf.p += l; }
+        else if (f2 === 3) keys.push(pbf.string(pbf.varint()));
+        else if (f2 === 4) { const l = pbf.varint(); values.push(decodeValue(pbf, pbf.p + l)); }
+        else if (f2 === 5) extent = pbf.varint();
+        else pbf.skip(w2);
+      }
+      const features = [];
+      for (const [s, e] of raw) {
+        pbf.p = s;
+        const feat = { type: 0, tags: {}, parts: [] };
+        let geom = null;
+        while (pbf.p < e) {
+          const t3 = pbf.varint(), f3 = t3 >> 3, w3 = t3 & 7;
+          if (f3 === 2) {
+            const fe = pbf.varint() + pbf.p;
+            while (pbf.p < fe) { const k = pbf.varint(), v = pbf.varint(); feat.tags[keys[k]] = values[v]; }
+          } else if (f3 === 3) feat.type = pbf.varint();
+          else if (f3 === 4) {
+            const ge = pbf.varint() + pbf.p; geom = [];
+            while (pbf.p < ge) geom.push(pbf.varint());
+          } else pbf.skip(w3);
+        }
+        if (geom) feat.parts = decodeGeom(geom);
+        features.push(feat);
+      }
+      pbf.p = end;
+      layers[name] = { extent, features };
+    }
+    return layers;
+  }
+  function decodeGeom(g) {
+    const parts = [];
+    let x = 0, y = 0, cur = null, i = 0;
+    const zz = (n) => (n % 2 === 1 ? -(n + 1) / 2 : n / 2);
+    while (i < g.length) {
+      const ci = g[i++], cmd = ci & 7, count = Math.floor(ci / 8);
+      if (cmd === 1) {
+        for (let c = 0; c < count; c++) { x += zz(g[i++]); y += zz(g[i++]); cur = [[x, y]]; parts.push(cur); }
+      } else if (cmd === 2) {
+        for (let c = 0; c < count; c++) { x += zz(g[i++]); y += zz(g[i++]); if (cur) cur.push([x, y]); }
+      } else if (cmd === 7) {
+        if (cur && cur.length) cur.push([cur[0][0], cur[0][1]]);
+      } else break;
+    }
+    return parts;
   }
 
-  /**
-   * Build the Overpass QL for one tile. Output is split into sections, each
-   * introduced by an `out count;` element, so the parser knows what follows.
-   * variant: 'full' (length() split + is_in) | 'safe' (no length()) | 'minimal' (no is_in)
-   */
-  function buildQuery(tileKey, opts) {
-    const o = Object.assign({ date: '', variant: 'full' }, opts || {});
-    const t = tileInfo(tileKey);
-    const p = t.pbox;
-    const bb = [p.s, p.w, p.n, p.e].map((x) => x.toFixed(6)).join(',');
-    const jp = inJapan(t.center[0], t.center[1]);
-    const pointTags = groupTags(['point'], jp);
-    const areaTags = groupTags(['area'], jp);
-    const cuisines = [...new Set(CATEGORIES.flatMap((c) => c.cuisine))];
-    const L = [];
-    const dateClause = o.date ? `[date:"${esc(o.date)}T00:00:00Z"]` : '';
-    L.push(`[out:json][timeout:90]${dateClause};`);
-    const sections = [];
-    // 1) points: POIs of point categories (any element, centre) + area categories as nodes
-    L.push('(');
-    for (const k of Object.keys(pointTags)) L.push(sel('nwr', k, pointTags[k], bb));
-    for (const k of Object.keys(areaTags)) L.push(sel('node', k, areaTags[k], bb));
-    L.push(`nwr["cuisine"~"${cuisines.join('|')}",i](${bb});`);
-    L.push(')->.p;', '.p out count;', '.p out tags center qt;');
-    sections.push('points');
-    // 2) area ways, full geometry
-    L.push('(');
-    for (const k of Object.keys(areaTags)) L.push(sel('way', k, areaTags[k], bb));
-    L.push(')->.aw;', '.aw out count;', '.aw out geom qt;');
-    sections.push('areaWays');
-    // 3) area relations — small ones full, big ones clipped to the tile
-    L.push('(');
-    for (const k of Object.keys(areaTags)) L.push(sel('relation', k, areaTags[k], bb));
-    L.push(')->.ar;');
-    if (o.variant === 'full') {
-      L.push(`relation.ar(if:length()<${BIG_REL_M})->.rs;`, '(.ar; - .rs;)->.rb;');
-      L.push('.rs out count;', '.rs out geom qt;');
-      sections.push('relFull');
-      L.push('.rb out count;', `.rb out geom(${bb}) qt;`);
-      sections.push('relClipped');
-    } else {
-      L.push('.ar out count;', `.ar out geom(${bb}) qt;`);
-      sections.push('relClipped');
-    }
-    // 4) bridges (lines, clipped)
-    L.push(`way["bridge"="yes"](${bb})->.br;`, '.br out count;', `.br out tags geom(${bb}) qt;`);
-    sections.push('bridges');
-    // 5) which big areas contain the tile centre (reference for clipped relations)
-    if (o.variant !== 'minimal' && !o.date) {
-      const [cl, cn] = t.center.map((x) => x.toFixed(6));
-      L.push(`is_in(${cl},${cn})->.ins;`, '(');
-      for (const k of Object.keys(areaTags)) L.push(sel('area.ins', k, areaTags[k], '').replace('()', ''));
-      L.push(')->.ia;', '.ia out count;', '.ia out tags;');
-      sections.push('isIn');
-    }
-    return { query: L.join('\n'), sections, tile: t };
+  // ---------------------------------------------------------------------------
+  // OpenMapTiles schema → OSM-like tags, so the same decor table applies
+  // ---------------------------------------------------------------------------
+  const POI_KEY = {};
+  for (const c of CATEGORIES) for (const [k, v] of c.tags) if (!POI_KEY[v]) POI_KEY[v] = k;
+  const STATION_SUB = new Set(['station', 'subway', 'light_rail', 'monorail']);
+  const WATER_CLASSES = new Set(['lake', 'river', 'pond']);
+  const LANDCOVER_TAGS = { forest: ['landuse', 'forest'], wood: ['natural', 'wood'], park: ['leisure', 'park'], beach: ['natural', 'beach'] };
+  const LANDUSE_TAGS = { stadium: ['leisure', 'stadium'], university: ['amenity', 'university'], college: ['amenity', 'college'], zoo: ['tourism', 'zoo'], theme_park: ['tourism', 'theme_park'] };
+
+  function poiTags(t) {
+    const tags = { name: t.name || t['name:latin'] || t.name_en || '', _src: 'poi:' + t.class + '/' + t.subclass };
+    const cls = t.class, sub = t.subclass;
+    if (cls === 'place_of_worship') tags.amenity = 'place_of_worship';
+    else if (cls === 'railway' && STATION_SUB.has(sub)) tags.railway = 'station';
+    else if (sub === 'bus_stop') tags.highway = 'bus_stop';
+    else if (sub && POI_KEY[sub]) tags[POI_KEY[sub]] = sub;
+    else return null;
+    return tags;
   }
 
-  /** clipBox: for clipped output, drop segments with both ends outside the box —
-   *  Overpass may omit the off-box nodes, which would otherwise create false chords. */
-  function geomToSegs(geom, segs, clipBox) {
-    if (!geom) return;
-    for (let k = 1; k < geom.length; k++) {
-      const a = geom[k - 1], b = geom[k];
-      if (!a || !b || a.lat == null || b.lat == null) continue;
-      if (clipBox && !bboxContains(clipBox, a.lat, a.lon) && !bboxContains(clipBox, b.lat, b.lon)) continue;
-      segs.push(a.lat, a.lon, b.lat, b.lon);
-    }
-  }
-
-  /** Turn an Overpass JSON response into a compact, cacheable tile record. */
-  function parseTile(json, built) {
-    const t = built.tile;
-    const out = {
-      key: t.key, bbox: t.bbox, pbox: t.pbox, center: t.center,
-      points: [], areas: [], lines: [], covers: [], fetched: Date.now(),
+  /** Convert a decoded z14 tile into the compact record the analysis uses. */
+  function vtileToRecord(layers, x, y) {
+    const t = tileInfo(x + '/' + y);
+    const rec = { key: t.key, x, y, bbox: t.bbox, center: t.center, points: [], areas: [], lines: [], cuisine: null };
+    const n = Math.pow(2, DATA_Z);
+    const toLL = (ext, px, py) => {
+      const lon = ((x + px / ext) / n) * 360 - 180;
+      const m = Math.PI - (2 * Math.PI * (y + py / ext)) / n;
+      return [Math.atan(Math.sinh(m)) / DEG, lon];
     };
+    let seq = 0;
+    const addPoint = (ext, f, tags, layer) => {
+      for (const part of f.parts) for (const [px, py] of part) {
+        if (px < 0 || py < 0 || px >= ext || py >= ext) continue; // buffer copy: owned by neighbour tile
+        const [lat, lon] = toLL(ext, px, py);
+        rec.points.push({ id: `${layer}:${t.key}:${seq++}`, et: 'node', lat, lon, tags });
+      }
+    };
+    const addArea = (ext, f, tags, layer) => {
+      const segs = [];
+      for (const ring of f.parts) {
+        const ll = ring.map(([px, py]) => toLL(ext, px, py));
+        for (let k = 1; k < ll.length; k++) segs.push(ll[k - 1][0], ll[k - 1][1], ll[k][0], ll[k][1]);
+        const a = ll[0], b = ll[ll.length - 1];
+        if (ll.length > 2 && (a[0] !== b[0] || a[1] !== b[1])) segs.push(b[0], b[1], a[0], a[1]);
+      }
+      if (segs.length >= 12) rec.areas.push({ id: `${layer}:${t.key}:${seq++}`, et: 'way', tags, segs, bbox: segsBBox(segs) });
+    };
+    const addLine = (ext, f, tags, layer) => {
+      const segs = [];
+      for (const line of f.parts) {
+        const ll = line.map(([px, py]) => toLL(ext, px, py));
+        for (let k = 1; k < ll.length; k++) segs.push(ll[k - 1][0], ll[k - 1][1], ll[k][0], ll[k][1]);
+      }
+      if (segs.length) rec.lines.push({ id: `${layer}:${t.key}:${seq++}`, et: 'way', tags, segs, bbox: segsBBox(segs) });
+    };
+    const L = (name) => (layers[name] ? layers[name] : { extent: 4096, features: [] });
+
+    let ly = L('poi');
+    for (const f of ly.features) { const tags = poiTags(f.tags); if (tags) addPoint(ly.extent, f, tags, 'poi'); }
+    ly = L('mountain_peak');
+    for (const f of ly.features) if (f.tags.class === 'peak' || f.tags.class === 'volcano') addPoint(ly.extent, f, { natural: 'peak', name: f.tags.name || '', _src: 'mountain_peak' }, 'peak');
+    ly = L('landcover');
+    for (const f of ly.features) {
+      const m = LANDCOVER_TAGS[f.tags.subclass];
+      if (m && f.type === 3) addArea(ly.extent, f, { [m[0]]: m[1], _src: 'landcover:' + f.tags.subclass }, 'landcover');
+    }
+    ly = L('landuse');
+    for (const f of ly.features) {
+      const m = LANDUSE_TAGS[f.tags.class];
+      if (m && f.type === 3) addArea(ly.extent, f, { [m[0]]: m[1], _src: 'landuse:' + f.tags.class }, 'landuse');
+    }
+    ly = L('water');
+    for (const f of ly.features) {
+      if (f.type === 3 && WATER_CLASSES.has(f.tags.class)) addArea(ly.extent, f, { natural: 'water', water: f.tags.class, _src: 'water:' + f.tags.class }, 'water');
+    }
+    ly = L('aeroway');
+    for (const f of ly.features) if (f.type === 3 && f.tags.class === 'aerodrome') addArea(ly.extent, f, { aeroway: 'aerodrome', _src: 'aeroway' }, 'aeroway');
+    ly = L('transportation');
+    for (const f of ly.features) if (f.type === 2 && f.tags.brunnel === 'bridge') addLine(ly.extent, f, { bridge: 'yes', highway: f.tags.class || '', _src: 'transportation' }, 'bridge');
+    ly = L('transportation_name');
+    for (const f of ly.features) if (f.type === 2 && f.tags.brunnel === 'bridge' && f.tags.name) addLine(ly.extent, f, { bridge: 'yes', name: f.tags.name, _src: 'transportation_name' }, 'bridgename');
+    return rec;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cuisine top-up from Overpass (OpenMapTiles has no cuisine tag).
+  // One light query per z14 tile, only when a cuisine decor is needed.
+  // ---------------------------------------------------------------------------
+  const CUISINE_VALUES = [...new Set(CATEGORIES.flatMap((c) => c.cuisine))];
+  function cuisineQuery(tileKey) {
+    const b = tileInfo(tileKey).bbox;
+    const bb = [b.s, b.w, b.n, b.e].map((v) => v.toFixed(6)).join(',');
+    return `[out:json][timeout:25];nwr["cuisine"~"${CUISINE_VALUES.join('|')}"](${bb});out tags center qt;`;
+  }
+  function parseCuisine(json, tileKey) {
     if (!json || !Array.isArray(json.elements)) throw new Error('Unexpected Overpass response');
     if (json.remark && /error/i.test(json.remark)) throw new Error('Overpass: ' + json.remark);
-    let si = -1;
-    const insideIds = new Map(); // area id -> tags
-    const seenAreaIds = new Set();
-    const relClipped = [];
+    const b = tileInfo(tileKey).bbox, out = [];
     for (const el of json.elements) {
-      if (el.type === 'count') { si++; continue; }
-      const section = built.sections[si];
-      if (section === 'points') {
-        const lat = el.lat != null ? el.lat : el.center && el.center.lat;
-        const lon = el.lon != null ? el.lon : el.center && el.center.lon;
-        if (lat == null) continue;
-        out.points.push({ id: el.type[0] + el.id, et: el.type, lat, lon, tags: el.tags || {} });
-      } else if (section === 'areaWays') {
-        const segs = [];
-        geomToSegs(el.geometry, segs);
-        if (segs.length < 12) continue;
-        // close the ring if Overpass returned an unclosed way
-        const g = el.geometry, a = g[0], b = g[g.length - 1];
-        if (a && b && (a.lat !== b.lat || a.lon !== b.lon)) segs.push(b.lat, b.lon, a.lat, a.lon);
-        out.areas.push({ id: 'w' + el.id, et: 'way', mode: 'ray', tags: el.tags || {}, segs });
-        seenAreaIds.add(2400000000 + el.id);
-      } else if (section === 'relFull' || section === 'relClipped') {
-        const segs = [];
-        for (const m of el.members || []) if (m.type === 'way') geomToSegs(m.geometry, segs, section === 'relClipped' ? t.pbox : null);
-        seenAreaIds.add(3600000000 + el.id);
-        if (!segs.length) continue;
-        const rec = { id: 'r' + el.id, et: 'relation', mode: section === 'relFull' ? 'ray' : 'ref', tags: el.tags || {}, segs };
-        out.areas.push(rec);
-        if (rec.mode === 'ref') relClipped.push([rec, el.id]);
-      } else if (section === 'bridges') {
-        const segs = [];
-        geomToSegs(el.geometry, segs, t.pbox);
-        if (segs.length) out.lines.push({ id: 'w' + el.id, et: 'way', tags: el.tags || {}, segs });
-      } else if (section === 'isIn') {
-        insideIds.set(el.id, el.tags || {});
-      }
+      const lat = el.lat != null ? el.lat : el.center && el.center.lat;
+      const lon = el.lon != null ? el.lon : el.center && el.center.lon;
+      if (lat == null || !bboxContains(b, lat, lon)) continue;
+      out.push({ id: 'cu:' + el.type[0] + el.id, et: 'node', lat, lon, tags: Object.assign({ _src: 'overpass cuisine' }, el.tags || {}), cuisineOnly: true });
     }
-    const hasIsIn = built.sections.includes('isIn');
-    for (const [rec, id] of relClipped) {
-      if (hasIsIn) {
-        rec.ref = t.center;
-        rec.refInside = insideIds.has(3600000000 + id);
-      } else {
-        rec.mode = 'ray'; // best effort without a reference point
-      }
-    }
-    // areas that contain the whole tile but have no edges near it
-    for (const [aid, tags] of insideIds) {
-      if (seenAreaIds.has(aid)) continue;
-      const id = aid >= 3600000000 ? 'r' + (aid - 3600000000) : 'w' + (aid - 2400000000);
-      out.covers.push({ id, et: aid >= 3600000000 ? 'relation' : 'way', tags });
-    }
-    for (const a of out.areas) a.bbox = segsBBox(a.segs);
-    for (const l of out.lines) l.bbox = segsBBox(l.segs);
     return out;
   }
 
   // ---------------------------------------------------------------------------
-  // Feature store: merges cached tiles
+  // Feature store: holds converted z14 tiles. Areas are tile-local (vector
+  // tiles clip polygons per tile), so an inside-test uses the point's own tile.
   // ---------------------------------------------------------------------------
   class FeatureStore {
     constructor() { this.tiles = new Map(); this.version = 0; this._idx = null; }
     addTile(tile) { this.tiles.set(tile.key, tile); this.version++; this._idx = null; }
+    setCuisine(key, points) { const t = this.tiles.get(key); if (t) { t.cuisine = points; this.version++; this._idx = null; } }
     has(key) { return this.tiles.has(key); }
+    hasCuisine(key) { const t = this.tiles.get(key); return !!(t && t.cuisine); }
     clear() { this.tiles.clear(); this.version++; this._idx = null; }
     tileAt(lat, lon) { return this.tiles.get(tileKeyFor(lat, lon)); }
     index() {
       if (this._idx) return this._idx;
-      const points = new Map(), rayAreas = new Map(), lines = new Map();
+      const points = [], lines = [];
       for (const t of this.tiles.values()) {
-        for (const p of t.points) if (!points.has(p.id)) points.set(p.id, p);
-        for (const a of t.areas) if (a.mode === 'ray' && !rayAreas.has(a.id)) rayAreas.set(a.id, a);
-        for (const l of t.lines) lines.set(l.id + '@' + t.key, l);
+        for (const p of t.points) points.push(p);
+        if (t.cuisine) for (const p of t.cuisine) points.push(p);
+        for (const l of t.lines) lines.push(l);
       }
-      // bucket points (~0.002° buckets)
       const B = 0.002, pb = new Map();
-      for (const p of points.values()) {
+      for (const p of points) {
         const k = Math.floor(p.lat / B) + ':' + Math.floor(p.lon / B);
         let arr = pb.get(k); if (!arr) pb.set(k, (arr = [])); arr.push(p);
       }
-      this._idx = { points: [...points.values()], pointBuckets: pb, B, rayAreas: [...rayAreas.values()], lines: [...lines.values()] };
+      this._idx = { points, pointBuckets: pb, B, lines };
       return this._idx;
     }
     pointsIn(b) {
@@ -523,22 +571,20 @@
       }
       return out;
     }
-    /** Area features (with categories already resolved) containing the point. */
+    /** Area features containing the point (tested against the point's own tile). */
     areasAt(lat, lon, catsOf) {
-      const res = [];
-      for (const a of this.index().rayAreas) {
-        if (!bboxContains(a.bbox, lat, lon)) continue;
-        if (!catsOf(a).length) continue;
+      const t = this.tileAt(lat, lon), res = [];
+      if (!t) return res;
+      for (const a of t.areas) {
+        if (!bboxContains(a.bbox, lat, lon) || !catsOf(a).length) continue;
         if (rayInside(a.segs, lat, lon)) res.push(a);
       }
-      const t = this.tileAt(lat, lon);
-      if (t) {
-        for (const a of t.areas) {
-          if (a.mode !== 'ref' || !catsOf(a).length) continue;
-          if (refInsideTest(a, lat, lon)) res.push(a);
-        }
-        for (const c of t.covers) if (catsOf(c).length) res.push(c);
-      }
+      return res;
+    }
+    /** Area features in the tile(s) overlapping a bbox (for small-polygon checks). */
+    areasNear(b) {
+      const res = [];
+      for (const k of tilesForBBox(b)) { const t = this.tiles.get(k); if (t) for (const a of t.areas) if (bboxOverlap(a.bbox, b)) res.push(a); }
       return res;
     }
   }
@@ -584,9 +630,23 @@
       }
     };
     const frame = expandBBox(bbox, grid.edge);
-    // points
-    for (const p of store.pointsIn(frame)) {
-      const cats = catsOf(p, 'point');
+    // points (cuisine top-up points only contribute cuisine decor)
+    const pts = store.pointsIn(frame);
+    const cuisinePts = pts.filter((p) => p.cuisineOnly);
+    const suppressed = new Set();
+    if (opts.cuisineMode === 'specific' && cuisinePts.length) {
+      // the vector-tile copy of a cuisine place loses its generic Restaurant/Burger decor
+      for (const p of pts) {
+        if (p.cuisineOnly || !(p.tags.amenity === 'restaurant' || p.tags.amenity === 'fast_food')) continue;
+        for (const q of cuisinePts) {
+          if (distM(p.lat, p.lon, q.lat, q.lon) < 40 && (!p.tags.name || !q.tags.name || p.tags.name === q.tags.name) && catsOf(q, 'point').length) { suppressed.add(p.id); break; }
+        }
+      }
+    }
+    for (const p of pts) {
+      let cats = catsOf(p, 'point');
+      if (p.cuisineOnly) cats = cats.filter((id) => CAT[id].cuisine.length);
+      if (suppressed.has(p.id)) cats = cats.filter((id) => !CAT[id].generic);
       if (cats.length) add(grid.keyOf(p.lat, p.lon), cats, p);
     }
     // lines (bridges): sample along each segment
@@ -623,8 +683,8 @@
       }
       if (opts.areaRule === 'overlap') {
         // small polygons entirely inside the cell
-        for (const a of store.index().rayAreas) {
-          if (hit.has(a.id) || !bboxOverlap(a.bbox, g.bbox) || !areaCats(a).length) continue;
+        for (const a of store.areasNear(g.bbox)) {
+          if (hit.has(a.id) || !areaCats(a).length) continue;
           if (grid.keyOf(a.segs[0], a.segs[1]) === key) hit.set(a.id, a);
         }
       }
@@ -728,13 +788,11 @@
     return { bbox, cols, rows, step, dLat, dLon, val, tcount, target };
   }
 
-  /** Connected regions of samples matching pred, best (deepest) point of each. */
-  function findRegions(ig, pred, limit) {
-    const { cols, rows, val } = ig;
+  /** Chessboard distance (in samples) from each in-set sample to the nearest
+   *  sample outside the set; the raster edge counts as outside (unknown). */
+  function distanceTransform(ig, inSet) {
+    const { cols, rows } = ig;
     const N = cols * rows;
-    const inSet = new Uint8Array(N);
-    for (let k = 0; k < N; k++) if (pred(val[k])) inSet[k] = 1;
-    // distance (in samples, chessboard) to the nearest sample NOT in the set
     const dist = new Int32Array(N).fill(-1);
     const q = new Int32Array(N);
     let qh = 0, qt = 0;
@@ -753,6 +811,16 @@
         if (dist[kk] === -1) { dist[kk] = dist[k] + 1; q[qt++] = kk; }
       }
     }
+    return dist;
+  }
+
+  /** Connected regions of samples matching pred, best (deepest) point of each. */
+  function findRegions(ig, pred, limit) {
+    const { cols, rows, val } = ig;
+    const N = cols * rows;
+    const inSet = new Uint8Array(N);
+    for (let k = 0; k < N; k++) if (pred(val[k])) inSet[k] = 1;
+    const dist = distanceTransform(ig, inSet);
     // components
     const comp = new Int32Array(N).fill(-1);
     const regions = [];
@@ -785,6 +853,33 @@
     }
     regions.sort((a, b) => b.safe - a.safe || b.area - a.area);
     return limit ? regions.slice(0, limit) : regions;
+  }
+
+  /**
+   * Closest point to (lat, lon) where the target shows with exactly `level`
+   * other types and you can drift at least minSafe metres without leaving the zone.
+   */
+  function nearestSpot(ig, lat, lon, level, minSafe) {
+    const { cols, rows, val } = ig;
+    const N = cols * rows, inSet = new Uint8Array(N);
+    let any = false;
+    for (let k = 0; k < N; k++) if (val[k] === level) { inSet[k] = 1; any = true; }
+    if (!any) return null;
+    const dist = distanceTransform(ig, inSet);
+    const need = Math.max(1, Math.ceil((minSafe || 0) / ig.step + 0.5));
+    let best = -1, bestD = Infinity;
+    for (let k = 0; k < N; k++) {
+      if (!inSet[k] || dist[k] < need) continue;
+      const r = (k / cols) | 0, c = k % cols;
+      const d = distM(lat, lon, ig.bbox.n - (r + 0.5) * ig.dLat, ig.bbox.w + (c + 0.5) * ig.dLon);
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    if (best < 0) return null;
+    const r = (best / cols) | 0, c = best % cols;
+    return {
+      lat: ig.bbox.n - (r + 0.5) * ig.dLat, lon: ig.bbox.w + (c + 0.5) * ig.dLon,
+      distance: bestD, safe: Math.max(0, (dist[best] - 0.5) * ig.step), level, targetCells: ig.tcount[best],
+    };
   }
 
   /** Ranked spot list: pure spots first, then the fewest-overlap spots. */
@@ -857,9 +952,10 @@
     ENGINE_VERSION, CATEGORIES, CAT, ROADSIDE, DEFAULT_OPTS, GRID_LABELS,
     distM, expandBBox, bboxContains, inJapan, catsFor, cuisineList,
     getGrid, cellsInBBox, latLngToFaceUV, faceUVToLatLng, uvToST, stToUV,
-    rayInside, refInsideTest, segCross,
-    TILE_DEG, tileKeyFor, tileInfo, tilesForBBox, buildQuery, parseTile,
-    FeatureStore, buildCellIndex, detect, isolationGrid, findRegions, rankSpots,
+    rayInside, segCross,
+    DATA_Z, tileKeyFor, tileInfo, tilesForBBox, lonToTileX, latToTileY, tileXToLon, tileYToLat,
+    decodeMVT, vtileToRecord, poiTags, cuisineQuery, parseCuisine, CUISINE_VALUES,
+    FeatureStore, buildCellIndex, detect, isolationGrid, findRegions, rankSpots, nearestSpot, distanceTransform,
     modelVariants, describeModel, predictAt, scoreReading, evaluateModels,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

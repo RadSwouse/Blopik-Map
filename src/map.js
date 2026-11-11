@@ -10,9 +10,8 @@
       this.el = el;
       this.lat = o.lat; this.lon = o.lon; this.zoom = o.zoom;
       this.minZoom = o.minZoom || 3; this.maxZoom = o.maxZoom || 20; this.maxNative = o.maxNative || 19;
-      this.tileUrl = o.tileUrl; this.subdomains = o.subdomains || ['a', 'b', 'c'];
+      this.source = null;
       this.layers = []; this.handlers = {};
-      this.tiles = new Map(); this.tileOrder = [];
       this.canvas = document.createElement('canvas');
       this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block';
       el.appendChild(this.canvas);
@@ -25,7 +24,6 @@
     }
     on(t, fn) { (this.handlers[t] = this.handlers[t] || []).push(fn); }
     emit(t, e) { (this.handlers[t] || []).forEach((fn) => fn(e)); }
-    setTileUrl(url, subdomains) { this.tileUrl = url; if (subdomains) this.subdomains = subdomains; this.tiles.clear(); this.tileOrder = []; this.redraw(); }
 
     // ---- projection -------------------------------------------------------
     worldSize(z) { return TS * Math.pow(2, z == null ? this.zoom : z); }
@@ -147,23 +145,11 @@
     }
 
     // ---- tiles + render ---------------------------------------------------
+    setSource(src) { this.source = src; this.maxNative = src.maxNative; this.redraw(); }
     _tile(z, x, y, load) {
-      const k = z + '/' + x + '/' + y;
-      let t = this.tiles.get(k);
-      if (!t && load) {
-        const n = Math.pow(2, z), xx = ((x % n) + n) % n;
-        const url = this.tileUrl.replace('{z}', z).replace('{x}', xx).replace('{y}', y)
-          .replace('{s}', this.subdomains[(xx + y) % this.subdomains.length])
-          .replace('{r}', this.dpr > 1.5 ? '@2x' : '');
-        const img = new Image();
-        t = { img, ok: false };
-        img.onload = () => { t.ok = true; this.redraw(); };
-        img.onerror = () => { t.err = true; };
-        img.src = url;
-        this.tiles.set(k, t); this.tileOrder.push(k);
-        if (this.tileOrder.length > 500) this.tiles.delete(this.tileOrder.shift());
-      }
-      return t;
+      const n = Math.pow(2, z);
+      if (!this.source || y < 0 || y >= n) return null;
+      return this.source.get(z, ((x % n) + n) % n, y, load, this.dpr);
     }
     redraw() {
       if (this._raf) return;
@@ -172,7 +158,7 @@
     render() {
       const ctx = this.ctx, dpr = this.dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = '#e9ecef'; ctx.fillRect(0, 0, this.w, this.h);
+      ctx.fillStyle = '#f2efe9'; ctx.fillRect(0, 0, this.w, this.h);
       const tz = clamp(Math.round(this.zoom), 0, this.maxNative);
       const scale = Math.pow(2, this.zoom - tz), size = TS * scale;
       const [cx, cy] = this.project(this.lat, this.lon, tz);
@@ -183,12 +169,12 @@
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         const px = Math.round(ox + x * size), py = Math.round(oy + y * size), ps = Math.ceil(size) + 1;
         const t = this._tile(tz, x, y, true);
-        if (t.ok) { ctx.drawImage(t.img, px, py, ps, ps); continue; }
+        if (t && t.ok) { ctx.drawImage(t.img, px, py, ps, ps); continue; }
         for (let up = 1; up <= 4 && tz - up >= 0; up++) { // parent fallback
           const f = Math.pow(2, up), pt = this._tile(tz - up, Math.floor(x / f), Math.floor(y / f), false);
           if (pt && pt.ok) {
-            const sub = TS / f, sx = (((x % f) + f) % f) * sub, sy = (y % f) * sub;
-            ctx.drawImage(pt.img, sx, sy, sub, sub, px, py, ps, ps); break;
+            const iw = pt.img.width / f, sx = (((x % f) + f) % f) * iw, sy = (y % f) * iw;
+            ctx.drawImage(pt.img, sx, sy, iw, iw, px, py, ps, ps); break;
           }
         }
       }

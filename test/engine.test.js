@@ -86,21 +86,34 @@ test('bridge modes', () => {
   assert.deepStrictEqual(E.catsFor(t, 'way', 'line', Object.assign({}, O, { bridgeMode: 'all' }), 47, -122), ['bridge']);
 });
 
-console.log('Overpass query + parse');
+console.log('Vector tiles');
 const tileKey = E.tileKeyFor(F.LAT0, F.LON0);
-test('query has sections and balanced parens', () => {
-  const q = E.buildQuery(tileKey, {});
-  assert.deepStrictEqual(q.sections, ['points', 'areaWays', 'relFull', 'relClipped', 'bridges', 'isIn']);
-  const opens = (q.query.match(/\(/g) || []).length, closes = (q.query.match(/\)/g) || []).length;
-  assert.strictEqual(opens, closes);
-  assert(!/area\.ins\[[^\]]+\]\(\)/.test(q.query), 'no empty bbox on area filter');
-  assert(!q.query.includes('place_of_worship'), 'not queried outside Japan');
-  console.log(q.query.split('\n').map((l) => '        | ' + l).join('\n'));
+test('tile maths round trip', () => {
+  const [x, y] = tileKey.split('/').map(Number);
+  const t = E.tileInfo(tileKey);
+  assert(E.bboxContains(t.bbox, F.LAT0, F.LON0));
+  assert.strictEqual(E.lonToTileX(E.tileXToLon(x, 14) + 1e-9, 14), x);
+  assert.strictEqual(E.latToTileY(E.tileYToLat(y, 14) - 1e-9, 14), y);
 });
-test('safe + dated variants', () => {
-  const q = E.buildQuery(tileKey, { variant: 'safe', date: '2026-09-01' });
-  assert(!q.query.includes('length()') && !q.query.includes('is_in') && q.query.includes('[date:"2026-09-01T00:00:00Z"]'));
-  assert.deepStrictEqual(q.sections, ['points', 'areaWays', 'relClipped', 'bridges']);
+test('MVT decode (plain + all geometry types)', () => {
+  const [x, y] = tileKey.split('/').map(Number);
+  const L = E.decodeMVT(new Uint8Array(F.encodeTile(14, x, y)));
+  assert(L.poi && L.poi.features.length >= 5, 'poi features');
+  assert.strictEqual(L.poi.extent, 4096);
+  const cafe = L.poi.features.find((f) => f.tags.subclass === 'cafe');
+  assert(cafe && cafe.type === 1 && cafe.tags.name === 'Bean There');
+  const park = L.landcover.features.find((f) => f.tags.subclass === 'park');
+  const ring = park.parts[0];
+  assert.deepStrictEqual(ring[0], ring[ring.length - 1], 'ring closed');
+  assert(L.transportation.features.some((f) => f.type === 2 && f.tags.brunnel === 'bridge'));
+});
+test('OpenMapTiles → OSM tags', () => {
+  assert.deepStrictEqual(E.catsFor(E.poiTags({ class: 'restaurant', subclass: 'restaurant' }), 'node', 'point', O, 47, -122), ['restaurant']);
+  assert.deepStrictEqual(E.catsFor(E.poiTags({ class: 'shop', subclass: 'convenience' }), 'node', 'point', O, 47, -122), ['corner_store']);
+  assert.deepStrictEqual(E.catsFor(E.poiTags({ class: 'railway', subclass: 'subway' }), 'node', 'point', O, 47, -122), ['station']);
+  assert.deepStrictEqual(E.catsFor(E.poiTags({ class: 'bus', subclass: 'bus_stop' }), 'node', 'point', O, 47, -122), ['bus_stop']);
+  assert.deepStrictEqual(E.catsFor(E.poiTags({ class: 'place_of_worship', subclass: 'shinto' }), 'node', 'point', O, 35, 135.77), ['shrine']);
+  assert.strictEqual(E.poiTags({ class: 'shop', subclass: 'florist' }), null);
 });
 
 const store = new E.FeatureStore();
@@ -108,36 +121,41 @@ function loadAround(lat, lon, radiusM) {
   const b = E.expandBBox({ s: lat, n: lat, w: lon, e: lon }, radiusM);
   for (const k of E.tilesForBBox(b)) {
     if (store.has(k)) continue;
-    const q = E.buildQuery(k, {});
-    store.addTile(E.parseTile(F.respond(q.query), q));
+    const [x, y] = k.split('/').map(Number);
+    store.addTile(E.vtileToRecord(E.decodeMVT(new Uint8Array(F.encodeTile(14, x, y))), x, y));
   }
 }
-test('parse tile', () => {
+test('vtileToRecord', () => {
   loadAround(F.LAT0, F.LON0, 900);
   const t = store.tiles.get(tileKey);
-  assert(t.points.length > 5, 'points ' + t.points.length);
-  assert(t.points.some((p) => p.tags.railway === 'station' && p.et === 'way'), 'station way as point');
-  const lake = [...store.tiles.values()].flatMap((x) => x.areas).find((a) => a.tags.name === 'Big Lake');
-  assert(lake && lake.mode === 'ref', 'big lake clipped/ref mode');
-  assert(lake.segs.length < 4 * 400, 'clipped geometry is small: ' + lake.segs.length / 4);
+  assert(t.points.some((p) => p.tags.railway === 'station'), 'station');
+  assert(!t.points.some((p) => p.tags.amenity === 'place_of_worship' && E.catsFor(p.tags, 'node', 'point', O, p.lat, p.lon).length), 'church not a decor in US');
+  assert(t.areas.some((a) => a.tags.leisure === 'park'), 'park area');
+  // points are never duplicated across tile buffers
+  const all = [...store.tiles.values()].flatMap((x) => x.points).filter((p) => p.tags.highway === 'bus_stop');
+  assert.strictEqual(all.length, 7, 'bus stops: ' + all.length);
+});
+test('cuisine top-up query + parse', () => {
+  const q = E.cuisineQuery(tileKey);
+  assert(q.includes('[timeout:25]') && q.includes('nwr["cuisine"~'));
+  let n = 0;
+  for (const k of store.tiles.keys()) { const pts = E.parseCuisine(F.respond(E.cuisineQuery(k)), k); n += pts.length; assert(pts.every((p) => p.cuisineOnly)); store.setCuisine(k, pts); }
+  assert.strictEqual(n, 2, 'both cuisine places found exactly once');
 });
 
 console.log('Cells, detector, isolation');
-const dist = (lat, lon) => E.distM(F.LAT0, F.LON0, lat, lon);
-test('lake (clipped relation) detected near shore, not far north', () => {
-  const [la1, lo1] = F.P(0, -450); // 50 m into the lake
-  assert(store.areasAt(la1, lo1, () => ['x']).some((a) => a.tags.name === 'Big Lake'), 'inside lake');
-  const [la2, lo2] = F.P(0, -300); // 100 m north of shore
-  assert(!store.areasAt(la2, lo2, () => ['x']).some((a) => a.tags.name === 'Big Lake'), 'outside lake');
-  const [la3, lo3] = F.P(400, -1300); // deep in the lake, other tile
+test('lake detected near shore, not further north; deep inside lake in another tile', () => {
+  const cats = () => ['x'];
+  assert(store.areasAt(...F.P(0, -450), cats).some((a) => a.tags.water === 'lake'), 'inside lake');
+  assert(!store.areasAt(...F.P(0, -300), cats).some((a) => a.tags.water === 'lake'), 'outside lake');
+  const [la3, lo3] = F.P(400, -2600);
   loadAround(la3, lo3, 300);
-  assert(store.areasAt(la3, lo3, () => ['x']).some((a) => a.tags.name === 'Big Lake'), 'deep inside lake (other tile)');
+  assert(store.areasAt(la3, lo3, cats).some((a) => a.tags.water === 'lake'), 'deep inside lake (other tile)');
 });
-test('tile fully inside a huge forest gets a cover record', () => {
+test('tile fully inside a huge forest is all forest', () => {
   const [la, lo] = F.P(0, 30000);
   loadAround(la, lo, 50);
-  const t = store.tileAt(la, lo);
-  assert(t.covers.some((c) => c.tags.name === 'Huge Forest'), JSON.stringify(t.covers));
+  assert(store.areasAt(la, lo, () => ['x']).some((a) => a.tags.landuse === 'forest'));
 });
 
 const view = E.expandBBox({ s: F.LAT0, n: F.LAT0, w: F.LON0, e: F.LON0 }, 700);
@@ -150,6 +168,7 @@ test('build cell index (S2 L17)', () => {
   for (const c of idx.cells.values()) for (const id of c.cats) counts[id] = (counts[id] || 0) + 1;
   console.log('        typed cells:', idx.cells.size, 'in', ms, 'ms', JSON.stringify(counts));
   assert(counts.park >= 6 && counts.waterside >= 10 && counts.cafe === 1 && counts.bus_stop >= 5);
+  assert(counts.sushi === 1, 'cuisine top-up merged');
   assert(counts.bridge >= 1 && [...idx.cells.values()].every((c) => !c.cats.includes('bridge') || c.src.every((x) => x.cat !== 'bridge' || x.name === 'Big Bridge')), 'only the named bridge');
 });
 test('detector inside the park', () => {
@@ -183,6 +202,23 @@ test('Waterside: pond inside park never pure, lake shore is', () => {
     const [pl, pn] = F.P(320, 315); // pond
     assert(E.distM(s.lat, s.lon, pl, pn) > 100, 'pure spot is not by the pond');
   }
+});
+test('specific cuisine mode drops Restaurant from the sushi place only', () => {
+  const idx2 = E.buildCellIndex(store, E.expandBBox(view, 100), { grid: 's2-17', cuisineMode: 'specific' });
+  const sushiCell = [...idx2.cells.values()].find((c) => c.cats.includes('sushi'));
+  assert(sushiCell && !sushiCell.cats.includes('restaurant'), JSON.stringify(sushiCell && sushiCell.cats));
+  assert([...idx2.cells.values()].some((c) => c.cats.includes('restaurant')), 'Diner still a Restaurant');
+});
+test('nearestSpot finds the closest pure Park point with a safety margin', () => {
+  const ig3 = E.isolationGrid(idx, view, 'park', 60000);
+  const from = F.P(-500, -300);
+  const s = E.nearestSpot(ig3, from[0], from[1], 0, 10);
+  assert(s && s.safe >= 10 - ig3.step, JSON.stringify(s));
+  assert.deepStrictEqual(E.detect(idx, s.lat, s.lon).shown, ['park']);
+  // every pure sample with that margin is at least as far away
+  const far = E.nearestSpot(ig3, from[0], from[1], 0, 40);
+  assert(far.distance >= s.distance);
+  console.log('        nearest pure park', Math.round(s.distance) + ' m', 'safe', Math.round(s.safe) + ' m');
 });
 test('nearest-first cap at maxShown', () => {
   const o = Object.assign({}, idx.opts, { maxShown: 1 });

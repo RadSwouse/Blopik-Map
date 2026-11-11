@@ -4,19 +4,13 @@
   const E = window.PBEngine;
   const $ = (s) => document.querySelector(s);
   const html = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '2.0.0';
   const LS_KEY = 'pbdecor.v1';
-  const CACHE_V = 'c1';
   const MIN_LOAD_ZOOM = 14.5;
   const MAX_VIEW_M = 3200;
-  const DEFAULT_ENDPOINTS = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter',
-    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-  ];
   const BASEMAPS = {
-    carto: { url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', sub: ['a', 'b', 'c', 'd'], attr: '© OpenStreetMap contributors · © CARTO', label: 'Clean (CARTO Voyager)' },
-    osm: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', sub: ['a'], attr: '© OpenStreetMap contributors', label: 'OpenStreetMap standard' },
+    openfreemap: { attr: '© OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors', label: 'OpenFreeMap (drawn from the decor data)' },
+    osm: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', sub: ['a'], attr: '© OpenStreetMap contributors', label: 'OpenStreetMap standard tiles' },
   };
   const LEVEL_COLORS = ['#16a34a', '#eab308', '#f97316', '#ef4444'];
 
@@ -28,10 +22,11 @@
     target: saved.target || null,
     opts: Object.assign({}, E.DEFAULT_OPTS, saved.opts || {}),
     settings: Object.assign({
-      basemap: 'carto', date: '', endpoint: 'auto', customEndpoint: '', ttlDays: 30,
+      basemap: 'openfreemap', cuisine: 'auto',
       showCells: true, showHeat: true, heatOpacity: 0.5,
     }, saved.settings || {}),
     view: saved.view || { lat: 35.6812, lon: 139.7671, zoom: 16 },
+    nearest: null,
     readings: Array.isArray(saved.readings) ? saved.readings : [],
     store: new E.FeatureStore(),
     index: null, ig: null, spots: [], heat: null,
@@ -51,139 +46,96 @@
   }
 
   // --------------------------------------------------------------------------
-  // Tile cache (IndexedDB with in-memory fallback)
+  // Map data: OpenFreeMap vector tiles (fast, cached by a CDN, no limits)
   // --------------------------------------------------------------------------
-  const cache = {
-    mem: new Map(), db: null, tried: false,
-    async open() {
-      if (this.tried) return this.db; this.tried = true;
-      try {
-        this.db = await new Promise((res, rej) => {
-          const r = indexedDB.open('pbdecor', 1);
-          r.onupgradeneeded = () => r.result.createObjectStore('tiles');
-          r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-        });
-      } catch (e) { this.db = null; }
-      return this.db;
-    },
-    key(k) { return CACHE_V + '|' + (state.settings.date || 'live') + '|' + k; },
-    async get(k) {
-      const key = this.key(k);
-      if (this.mem.has(key)) return this.mem.get(key);
-      const db = await this.open(); if (!db) return null;
-      try {
-        return await new Promise((res) => {
-          const r = db.transaction('tiles').objectStore('tiles').get(key);
-          r.onsuccess = () => res(r.result || null); r.onerror = () => res(null);
-        });
-      } catch (e) { return null; }
-    },
-    async set(k, v) {
-      const key = this.key(k); this.mem.set(key, v);
-      const db = await this.open(); if (!db) return;
-      try { db.transaction('tiles', 'readwrite').objectStore('tiles').put(v, key); } catch (e) { /* quota etc. */ }
-    },
-    async clear() {
-      this.mem.clear();
-      const db = await this.open(); if (!db) return;
-      try { db.transaction('tiles', 'readwrite').objectStore('tiles').clear(); } catch (e) { /* ignore */ }
-    },
-  };
-
-  // --------------------------------------------------------------------------
-  // Overpass with endpoint fallback, query-variant fallback, concurrency limit
-  // --------------------------------------------------------------------------
-  class QueryError extends Error {}
-  function endpoints() {
-    const list = DEFAULT_ENDPOINTS.slice();
-    const custom = (state.settings.customEndpoint || '').trim();
-    if (custom) list.unshift(custom);
-    let pref = null; try { pref = localStorage.getItem('pbdecor.ep'); } catch (e) { /* */ }
-    if (state.settings.endpoint !== 'auto') return [state.settings.endpoint === 'custom' ? custom : state.settings.endpoint, ...list].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
-    if (pref && list.includes(pref)) list.splice(list.indexOf(pref), 1), list.unshift(pref);
-    return list;
-  }
-  async function overpass(query) {
-    let lastErr = null;
-    for (const ep of endpoints()) {
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 80000);
-      try {
-        const res = await fetch(ep, {
-          method: 'POST', signal: ctl.signal,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'data=' + encodeURIComponent(query),
-        });
-        if (res.status === 400) throw new QueryError((await res.text()).slice(0, 400));
-        if (!res.ok) { lastErr = new Error(ep.split('/')[2] + ' HTTP ' + res.status); continue; }
-        const json = await res.json();
-        if (json.remark && /runtime error|timed out|out of memory|too busy/i.test(json.remark)) { lastErr = new Error(json.remark); continue; }
-        try { localStorage.setItem('pbdecor.ep', ep); } catch (e) { /* */ }
-        return json;
-      } catch (e) {
-        if (e instanceof QueryError) throw e;
-        lastErr = e.name === 'AbortError' ? new Error(ep.split('/')[2] + ' timed out') : e;
-      } finally { clearTimeout(timer); }
-    }
-    throw lastErr || new Error('No Overpass server reachable');
-  }
-  async function fetchTile(key) {
-    let qerr = null;
-    for (const variant of ['full', 'safe', 'minimal']) {
-      const built = E.buildQuery(key, { variant, date: state.settings.date });
-      try { return E.parseTile(await overpass(built.query), built); } catch (e) {
-        if (e instanceof QueryError) { qerr = e; console.warn('Query variant', variant, 'rejected:', e.message); continue; }
-        throw e;
-      }
-    }
-    throw qerr;
-  }
-  const inflight = new Map();
-  let active = 0; const waiters = [];
-  async function slot() { if (active < 2) { active++; return; } await new Promise((r) => waiters.push(r)); active++; }
-  function release() { active--; const w = waiters.shift(); if (w) w(); }
+  const vt = new window.PBVector.VectorTiles('https://tiles.openfreemap.org/planet');
+  const tileJobs = new Map();
   function getTile(key) {
     if (state.store.has(key)) return Promise.resolve(true);
-    if (inflight.has(key)) return inflight.get(key);
-    const p = (async () => {
-      const c = await cache.get(key);
-      const ttl = state.settings.ttlDays * 864e5;
-      if (c && c.fetched && Date.now() - c.fetched < ttl) { state.store.addTile(c); return true; }
-      await slot();
-      try {
-        let tile, err;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try { tile = await fetchTile(key); break; } catch (e) { err = e; if (e instanceof QueryError) break; await new Promise((r) => setTimeout(r, 2500)); }
-        }
-        if (!tile) {
-          if (c) { state.store.addTile(c); return true; } // stale cache beats nothing
-          throw err;
-        }
-        state.store.addTile(tile); state.failedTiles.delete(key); cache.set(key, tile);
-        return true;
-      } finally { release(); }
-    })();
-    inflight.set(key, p);
-    p.catch(() => state.failedTiles.add(key)).finally(() => inflight.delete(key));
+    if (tileJobs.has(key)) return tileJobs.get(key);
+    const [x, y] = key.split('/').map(Number);
+    const p = vt.get(E.DATA_Z, x, y).then((layers) => {
+      state.store.addTile(E.vtileToRecord(layers || {}, x, y));
+      state.failedTiles.delete(key);
+      return true;
+    });
+    tileJobs.set(key, p);
+    p.catch(() => state.failedTiles.add(key)).finally(() => tileJobs.delete(key));
     return p;
   }
   async function ensureTiles(keys, onProgress) {
     let done = 0;
-    const total = keys.length;
     const errors = [];
-    await Promise.all(keys.map((k) => getTile(k).catch((e) => errors.push(e)).finally(() => { done++; onProgress && onProgress(done, total); })));
+    await Promise.all(keys.map((k) => getTile(k).catch((e) => errors.push(e)).finally(() => { done++; onProgress && onProgress(done, keys.length); })));
     return errors;
   }
 
   // --------------------------------------------------------------------------
+  // Cuisine top-up from Overpass — polite: one request at a time, 30 s+ pause
+  // after any "busy" answer, give up after 3 failures (user can retry).
+  // --------------------------------------------------------------------------
+  const CUISINE_ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+  const cuisineQ = { queue: [], running: false, cooldownUntil: 0, failures: 0, epIndex: 0, lastError: '', stopped: false };
+  function needCuisine() {
+    const m = state.settings.cuisine;
+    if (m === 'never') return false;
+    return m === 'always' || !!(state.target && E.CAT[state.target].cuisine.length);
+  }
+  function queueCuisine(keys) {
+    for (const k of keys) if (state.store.has(k) && !state.store.hasCuisine(k) && !cuisineQ.queue.includes(k)) cuisineQ.queue.push(k);
+    runCuisine();
+  }
+  async function runCuisine() {
+    if (cuisineQ.running || cuisineQ.stopped) return;
+    cuisineQ.running = true;
+    try {
+      while (cuisineQ.queue.length) {
+        const wait = cuisineQ.cooldownUntil - Date.now();
+        if (wait > 0) { renderStatus(); await new Promise((r) => setTimeout(r, Math.min(wait, 1000))); continue; }
+        const key = cuisineQ.queue[0];
+        if (state.store.hasCuisine(key)) { cuisineQ.queue.shift(); continue; }
+        const ep = CUISINE_ENDPOINTS[cuisineQ.epIndex % CUISINE_ENDPOINTS.length];
+        renderStatus();
+        try {
+          const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 40000);
+          let res;
+          try {
+            res = await fetch(ep, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(E.cuisineQuery(key)) });
+          } finally { clearTimeout(timer); }
+          if (!res.ok) throw new Error(ep.split('/')[2] + ' answered HTTP ' + res.status);
+          const pts = E.parseCuisine(await res.json(), key);
+          state.store.setCuisine(key, pts);
+          cuisineQ.queue.shift(); cuisineQ.failures = 0; cuisineQ.lastError = '';
+          scheduleAnalyze();
+          await new Promise((r) => setTimeout(r, 1500)); // spacing between requests
+        } catch (e) {
+          cuisineQ.failures++; cuisineQ.epIndex++;
+          cuisineQ.lastError = e.name === 'AbortError' ? 'request timed out' : (e.message || String(e));
+          cuisineQ.cooldownUntil = Date.now() + 30000 * cuisineQ.failures;
+          if (cuisineQ.failures >= 3) { cuisineQ.stopped = true; cuisineQ.queue = []; break; }
+        }
+      }
+    } finally { cuisineQ.running = false; renderStatus(); renderSpots(); }
+  }
+  function retryCuisine() { cuisineQ.stopped = false; cuisineQ.failures = 0; cuisineQ.cooldownUntil = 0; lastIndexKey = ''; analyze(); }
+
+  // --------------------------------------------------------------------------
   // Map
   // --------------------------------------------------------------------------
-  const bm = BASEMAPS[state.settings.basemap] || BASEMAPS.carto;
-  const map = new window.SlippyMap($('#map'), { lat: state.view.lat, lon: state.view.lon, zoom: state.view.zoom, tileUrl: bm.url, subdomains: bm.sub, maxZoom: 20.5 });
+  if (!BASEMAPS[state.settings.basemap]) state.settings.basemap = 'openfreemap';
+  const map = new window.SlippyMap($('#map'), { lat: state.view.lat, lon: state.view.lon, zoom: state.view.zoom, maxZoom: 20.5 });
+  function applyBasemap() {
+    const b = state.settings.basemap;
+    map.setSource(b === 'osm' ? window.PBVector.rasterSource(BASEMAPS.osm.url, BASEMAPS.osm.sub, () => map.redraw()) : window.PBVector.vectorSource(vt, () => map.redraw()));
+  }
+  applyBasemap();
   const attr = document.createElement('div');
-  attr.style.cssText = 'position:fixed;right:62px;z-index:4;font-size:10px;background:rgba(255,255,255,.8);padding:1px 5px;border-radius:4px;color:#333';
+  attr.style.cssText = 'position:fixed;right:62px;z-index:4;font-size:10px;background:rgba(255,255,255,.8);padding:1px 5px;border-radius:4px;color:#333;white-space:nowrap;max-width:calc(100% - 70px);overflow:hidden;text-overflow:ellipsis';
   document.body.appendChild(attr);
-  function placeAttr() { attr.textContent = (BASEMAPS[state.settings.basemap] || BASEMAPS.carto).attr; attr.style.bottom = `calc(${getComputedStyle(document.documentElement).getPropertyValue('--sheet-h')} + 2px)`; if (innerWidth >= 900) attr.style.bottom = '2px'; }
+  function placeAttr() {
+    const full = (BASEMAPS[state.settings.basemap] || BASEMAPS.openfreemap).attr;
+    attr.textContent = innerWidth < 600 ? full.replace(' · © OpenMapTiles', '').replace('OpenStreetMap contributors', 'OSM contributors') : full;
+    $('#legend').style.marginBottom = innerWidth < 900 ? '14px' : ''; attr.style.bottom = `calc(${getComputedStyle(document.documentElement).getPropertyValue('--sheet-h')} + 2px)`; if (innerWidth >= 900) attr.style.bottom = '2px'; }
 
   function sheetPx() { return innerWidth >= 900 ? 0 : sheetFrac * innerHeight; }
   /** Animate so (lat, lon) sits in the middle of the map area not covered by the sheet. */
@@ -301,43 +253,66 @@
     if (!msg) { el.hidden = true; return; }
     el.hidden = false; el.className = 'pill ' + (cls || ''); el.innerHTML = msg;
   }
+  const statusState = { main: '', cls: '', failed: 0, need: 0, err: '' };
+  function renderStatus() {
+    let msg = statusState.main, cls = statusState.cls;
+    if (statusState.failed) {
+      msg = `⚠️ ${statusState.failed} of ${statusState.need} map squares failed (${html(statusState.err || 'network')}). <button class="btn sm" id="retry">Retry</button>`;
+      cls = 'warn';
+    }
+    if (needCuisine() && msg && !statusState.failed) {
+      const left = cuisineQ.queue.length;
+      if (cuisineQ.stopped) { msg += ` · <span title="${html(cuisineQ.lastError)}">cuisine lookup failed</span> <button class="btn sm" id="retryCu">Retry</button>`; cls = 'warn'; }
+      else if (left) {
+        const wait = Math.ceil((cuisineQ.cooldownUntil - Date.now()) / 1000);
+        msg += wait > 0 ? ` · cuisine server busy, retry in ${wait}s` : ` · loading cuisine data (${left} left)`;
+        cls = 'busy';
+      }
+    }
+    setStatus(msg, cls);
+    const b = $('#retry'); if (b) b.onclick = () => { lastIndexKey = ''; analyze(); };
+    const c = $('#retryCu'); if (c) c.onclick = retryCuisine;
+  }
+  let schedT = 0;
+  function scheduleAnalyze() { clearTimeout(schedT); schedT = setTimeout(analyze, 250); }
   async function analyze() {
     persist();
     const token = ++analyzeToken;
     if (map.zoom < MIN_LOAD_ZOOM) {
-      setStatus('Zoom in to load decor data');
-      renderLegend();
+      statusState.main = 'Zoom in to load decor data'; statusState.cls = ''; statusState.failed = 0;
+      renderStatus(); renderLegend();
       return;
     }
     const vb = viewBBox();
     const grid = E.getGrid(state.opts.grid);
     const need = E.tilesForBBox(E.expandBBox(vb, state.opts.radius + grid.edge + 40));
     const missing = need.filter((k) => !state.store.has(k));
-    if (missing.length) setStatus(`Loading decor data… 0/${missing.length}`, 'busy');
-    const errors = await ensureTiles(missing, (d, t) => { if (token === analyzeToken) setStatus(`Loading decor data… ${d}/${t}`, 'busy'); });
+    if (missing.length) { statusState.main = `Loading map data… 0/${missing.length}`; statusState.cls = 'busy'; statusState.failed = 0; renderStatus(); }
+    const errors = await ensureTiles(missing, (d, t) => { if (token === analyzeToken) { statusState.main = `Loading map data… ${d}/${t}`; renderStatus(); } });
     if (token !== analyzeToken) return;
     const failed = need.filter((k) => !state.store.has(k));
-    setStatus('Analysing…', 'busy');
-    await new Promise((r) => setTimeout(r, 0));
-    if (token !== analyzeToken) return;
+    if (needCuisine()) queueCuisine(need);
     const key = [state.store.version, JSON.stringify(state.opts), vb.s.toFixed(5), vb.w.toFixed(5), vb.n.toFixed(5), vb.e.toFixed(5)].join('|');
     if (key !== lastIndexKey) {
+      statusState.main = 'Analysing…'; statusState.cls = 'busy'; renderStatus();
+      await new Promise((r) => setTimeout(r, 0));
+      if (token !== analyzeToken) return;
       state.index = E.buildCellIndex(state.store, E.expandBBox(vb, state.opts.radius), state.opts);
       state.index.view = vb;
       state.isolatable = null;
       lastIndexKey = key;
       runTarget();
     }
-    refreshProbe();
+    await refreshProbe();
     const nTarget = state.target ? [...state.index.cells.values()].filter((c) => c.cats.includes(state.target)).length : 0;
-    if (failed.length) {
-      const msg = errors[0] ? html(errors[0].message || errors[0]) : 'server busy';
-      setStatus(`⚠️ ${failed.length} of ${need.length} map areas failed (${msg}). <button class="btn sm" id="retry">Retry</button>`, 'warn');
-      const b = $('#retry'); if (b) b.onclick = () => { lastIndexKey = ''; analyze(); };
-    } else if (state.target) {
-      const pure = state.spots.filter((s) => s.level === 0).length;
-      setStatus(`${E.CAT[state.target].icon} ${nTarget} cell${nTarget === 1 ? '' : 's'} · ${pure} pure spot${pure === 1 ? '' : 's'}`);
-    } else setStatus(`${state.index.cells.size} decor cells in view`);
+    statusState.failed = failed.length; statusState.need = need.length;
+    statusState.err = errors[0] ? (errors[0].message || String(errors[0])) : '';
+    statusState.cls = '';
+    if (state.target) {
+      const pure = state.spots.filter((x) => x.level === 0).length;
+      statusState.main = `${E.CAT[state.target].icon} ${nTarget} cell${nTarget === 1 ? '' : 's'} · ${pure} pure spot${pure === 1 ? '' : 's'}`;
+    } else statusState.main = `${state.index.cells.size} decor cells in view`;
+    renderStatus();
     renderAll();
     map.redraw();
   }
@@ -440,9 +415,19 @@
     const nCells = [...state.index.cells.values()].filter((x) => x.cats.includes(state.target)).length;
     const ref = refPoint();
     let out = `<div class="row" style="justify-content:space-between"><h3>${c.icon} ${html(c.name)}</h3><span class="muted small">${nCells} cell${nCells === 1 ? '' : 's'} in view</span></div>`;
+    out += nearestHtml();
+    const cuisinePending = c.cuisine.length && state.settings.cuisine !== 'never' && (cuisineQ.queue.length || cuisineQ.running);
+    if (!nCells && cuisinePending) {
+      out += `<p class="muted">⏳ Loading cuisine data from the Overpass server. This can take a while when it's busy.</p>`;
+      el.innerHTML = out; bindNearest(el); return;
+    }
+    if (!nCells && c.cuisine.length && (cuisineQ.stopped || state.settings.cuisine === 'never')) {
+      out += `<p class="muted">Cuisine data isn't available right now (${state.settings.cuisine === 'never' ? 'turned off in Settings' : 'the Overpass server is busy'}). Restaurants still count as 🍽️ Restaurant.</p>`;
+      el.innerHTML = out; bindNearest(el); return;
+    }
     if (!nCells) {
-      out += `<p class="muted">No ${html(c.name)} locations in OpenStreetMap in this view. Pan or zoom out a little (data loads up to ~3 km across).</p>${isolatableHtml()}`;
-      el.innerHTML = out; bindIsolatable(el); return;
+      out += `<p class="muted">No ${html(c.name)} locations in OpenStreetMap in this view. Try <b>📍 Find nearest</b>, or pan the map.</p>${isolatableHtml()}`;
+      el.innerHTML = out; bindIsolatable(el); bindNearest(el); return;
     }
     if (!state.spots.length) out += '<p class="muted">The target shows up here, but always alongside many other types.</p>';
     const pureCount = state.spots.filter((s) => s.level === 0).length;
@@ -469,6 +454,80 @@
       setProbe(s.lat, s.lon, false);
     });
     el.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copyText(b.dataset.copy));
+    bindNearest(el);
+  }
+
+  // ---- find nearest ----
+  let nearestToken = 0;
+  function nearestHtml() {
+    const n = state.nearest, c = E.CAT[state.target];
+    let out = `<div class="row" style="margin:2px 0 8px"><button class="btn primary sm" id="findNearest" ${n && n.busy ? 'disabled' : ''}>📍 Find nearest</button>
+      <span class="muted small">${state.me ? 'from your location' : 'from the map centre (tap ◎ to use GPS)'}</span></div>`;
+    if (!n) return out;
+    if (n.busy) return out + `<div class="card"><span class="muted small">⏳ ${html(n.msg)}</span></div>`;
+    if (n.error) return out + `<div class="card"><span class="small">⚠️ ${html(n.error)}</span></div>`;
+    const sp = n.spot;
+    if (!sp) return out + `<div class="card"><span class="small">No spot with ${c.icon} ${html(c.name)} found within ${fmtDist(n.radius)}.</span></div>`;
+    const others = sp.level === 0 ? '' : ` (+${sp.level} other type${sp.level > 1 ? 's' : ''})`;
+    return out + `<div class="card ${sp.level === 0 ? 'pure' : ''}"><div class="spot-h"><span class="num l${Math.min(3, sp.level)}">📍</span>
+      <span>${sp.level === 0 ? `Nearest spot with only ${c.icon}` : `No pure spot within ${fmtDist(n.radius)}. Nearest with fewest others${others}`}</span></div>
+      <div class="muted small" style="margin:4px 0 8px">${fmtDist(sp.distance)} away · safe zone ±${Math.round(sp.safe)} m</div>
+      <div class="row"><button class="btn sm" id="nearShow">Show</button><a class="btn sm" href="${dirLink(sp.lat, sp.lon)}" target="_blank" rel="noopener">Walk there ↗</a></div></div>`;
+  }
+  function bindNearest(el) {
+    const b = el.querySelector('#findNearest'); if (b) b.onclick = findNearest;
+    const s2 = el.querySelector('#nearShow'); if (s2) s2.onclick = () => showNearest();
+  }
+  function showNearest() {
+    const sp = state.nearest && state.nearest.spot; if (!sp) return;
+    if (innerWidth < 900) setSheet(0.3);
+    frame(sp.lat, sp.lon, Math.max(map.zoom, 16.5));
+    setProbe(sp.lat, sp.lon, false);
+  }
+  async function findNearest() {
+    const t = state.target; if (!t) return;
+    const token = ++nearestToken;
+    const origin = refPoint();
+    const grid = E.getGrid(state.opts.grid);
+    const isCuisine = E.CAT[t].cuisine.length > 0;
+    const set = (o) => { if (token === nearestToken) { state.nearest = o; renderSpots(); } };
+    let fallback = null, R = 0;
+    try {
+      for (R of [500, 1000, 2000, 3000]) {
+        set({ busy: true, msg: `Searching within ${fmtDist(R)}…` });
+        const area = E.expandBBox({ s: origin.lat, n: origin.lat, w: origin.lon, e: origin.lon }, R);
+        const keys = E.tilesForBBox(E.expandBBox(area, state.opts.radius + grid.edge + 40));
+        const errs = await ensureTiles(keys, (d, n) => set({ busy: true, msg: `Searching within ${fmtDist(R)}… map data ${d}/${n}` }));
+        if (token !== nearestToken) return;
+        if (errs.length) throw new Error(`Couldn't load part of the map (${errs[0].message || errs[0]})`);
+        if (isCuisine && state.settings.cuisine !== 'never') {
+          queueCuisine(keys);
+          while (keys.some((k) => !state.store.hasCuisine(k)) && !cuisineQ.stopped) {
+            const left = keys.filter((k) => !state.store.hasCuisine(k)).length;
+            set({ busy: true, msg: `Searching within ${fmtDist(R)}… cuisine data ${keys.length - left}/${keys.length} (the cuisine server is slow)` });
+            await new Promise((r) => setTimeout(r, 1000));
+            if (token !== nearestToken) return;
+          }
+          if (cuisineQ.stopped) throw new Error('The cuisine server is too busy right now. Try again in a few minutes.');
+        }
+        await new Promise((r) => setTimeout(r, 20));
+        const idx = E.buildCellIndex(state.store, E.expandBBox(area, state.opts.radius), state.opts);
+        await new Promise((r) => setTimeout(r, 0));
+        const ig = E.isolationGrid(idx, area, t, 150000);
+        const pure = E.nearestSpot(ig, origin.lat, origin.lon, 0, 8);
+        if (pure && (pure.distance <= R || R === 3000)) { set({ spot: pure, radius: R }); showNearest(); return; }
+        if (!fallback) {
+          for (const lv of [1, 2, 3]) {
+            const f = E.nearestSpot(ig, origin.lat, origin.lon, lv, 8);
+            if (f && f.distance <= R) { fallback = f; break; }
+          }
+        }
+      }
+      set({ spot: fallback, radius: R });
+      if (fallback) showNearest();
+    } catch (e) {
+      set({ error: e.message || String(e) });
+    }
   }
   function isolatableHtml() {
     if (!state.index || map.zoom < MIN_LOAD_ZOOM) return '';
@@ -601,7 +660,7 @@
     });
   }
   function exportJson() {
-    return JSON.stringify({ app: 'pikmin-decor-finder', version: APP_VERSION, exported: new Date().toISOString(), model: state.opts, osmDate: state.settings.date || 'live', readings: state.readings }, null, 1);
+    return JSON.stringify({ app: 'pikmin-decor-finder', version: APP_VERSION, exported: new Date().toISOString(), model: state.opts, mapData: 'OpenFreeMap ' + (vt.version || '?'), readings: state.readings }, null, 1);
   }
   async function testModels() {
     const btn = $('#calTest'); btn.disabled = true; btn.textContent = 'Loading map data…';
@@ -660,14 +719,12 @@
       </div>
       <p class="muted small">Defaults come from Pikipedia (100 m range, cell centre must be in range). S2 level 17 is the best guess so far: about 6 of its cells fit in the 100 m circle, matching the 6–7 icon limit. Use Calibrate to check.</p>
       <h3 style="margin-top:14px">Data</h3>
+      <p class="small">Places, parks and water come from <b>OpenFreeMap</b> (OpenStreetMap data${vt.version ? `, extract of <b>${html(vt.version)}</b>` : ''}, refreshed weekly). The game refreshed its own map in October 2026, so places added to OSM since then can show here but not in the game.</p>
       <div class="kv">
-        <label for="sDate">OSM data as of</label><input id="sDate" type="date" value="${html(s.date)}">
-        <label for="sEp">Overpass server</label><select id="sEp">${opt('auto', 'Automatic (fastest that works)', s.endpoint)}${DEFAULT_ENDPOINTS.map((u) => opt(u, u.split('/')[2], s.endpoint)).join('')}${opt('custom', 'Custom…', s.endpoint)}</select>
-        <label for="sCustom">Custom URL</label><input id="sCustom" placeholder="https://…/api/interpreter" value="${html(s.customEndpoint)}">
-        <label for="sTtl">Keep data (days)</label><input id="sTtl" type="number" min="1" max="365" value="${s.ttlDays}">
+        <label for="sCuisine">Cuisine lookups</label><select id="sCuisine">${opt('auto', 'Only when a cuisine decor is chosen', s.cuisine)}${opt('always', 'Always (more accurate overlaps, slower)', s.cuisine)}${opt('never', 'Never', s.cuisine)}</select>
       </div>
-      <p class="muted small">Leave the date empty to use today's OSM. The game refreshed its map in October 2026, so recent OSM edits may not be in the game yet. Setting a date (e.g. 2026-09-01) asks Overpass for the map as it was then. Those queries are slower, and big polygons may be less exact.</p>
-      <div class="row"><button class="btn sm" id="sClear">Clear downloaded data</button></div>
+      <p class="muted small">OpenFreeMap doesn't say which cuisine a restaurant serves. Sushi, Italian, Ramen, Curry, Mexican and Korean come from a small extra lookup on the public Overpass server, which is often busy. The app sends one request at a time and waits at least 30 s after a busy answer.</p>
+      <div class="row"><button class="btn sm" id="sClear">Reload map data</button></div>
       <h3 style="margin-top:14px">Display</h3>
       <div class="kv">
         <label for="sBase">Base map</label><select id="sBase">${Object.entries(BASEMAPS).map(([k, v]) => opt(k, v.label, s.basemap)).join('')}</select>
@@ -682,19 +739,16 @@
     on('#sBridge', (e) => { o.bridgeMode = e.target.value; remodel(); });
     on('#sRad', (e) => { o.radius = Math.max(20, Math.min(300, +e.target.value || 100)); remodel(); });
     on('#sMax', (e) => { o.maxShown = Math.max(1, Math.min(12, +e.target.value || 6)); remodel(); });
-    on('#sDate', (e) => { s.date = e.target.value; state.store.clear(); remodel(); });
-    on('#sEp', (e) => { s.endpoint = e.target.value; persist(); });
-    on('#sCustom', (e) => { s.customEndpoint = e.target.value.trim(); persist(); });
-    on('#sTtl', (e) => { s.ttlDays = Math.max(1, +e.target.value || 30); persist(); });
-    on('#sBase', (e) => { s.basemap = e.target.value; const b = BASEMAPS[s.basemap]; map.setTileUrl(b.url, b.sub); placeAttr(); persist(); });
+    on('#sCuisine', (e) => { s.cuisine = e.target.value; retryCuisine(); });
+    on('#sBase', (e) => { s.basemap = e.target.value; applyBasemap(); placeAttr(); persist(); });
     $('#sOp').oninput = (e) => { s.heatOpacity = +e.target.value; map.redraw(); persist(); };
-    $('#sClear').onclick = async () => { await cache.clear(); state.store.clear(); toast('Downloaded data cleared'); remodel(); };
+    $('#sClear').onclick = () => { state.store.clear(); vt.data.clear(); vt.order = []; applyBasemap(); toast('Reloading map data'); remodel(); };
   }
 
   function renderHelp() {
     $('#p-help').innerHTML = `<h3>How it works</h3>
       <p class="small">The game decides a seedling's decor from the map <b>cell</b> it was found in. The detector looks at every cell whose <b>centre</b> is within <b>100 m</b> of you and shows the decor types in those cells. One seedling is always one of the shown types. So if only one type is in range, that seedling is guaranteed to be that type.</p>
-      <p class="small">This tool downloads OpenStreetMap places for the area (one combined query per ~1 km tile, cached on your device). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there.</p>
+      <p class="small">This tool loads OpenStreetMap data for the area from OpenFreeMap's ready-made map files (fast, no limits). It works out each cell's decor types, then tests every point on the map to see which types the detector would list there. <b>📍 Find nearest</b> searches outward from you (up to 3 km) for the closest spot where only your chosen type shows.</p>
       <h3>Colours</h3>
       <p class="small"><b style="color:${LEVEL_COLORS[0]}">Green</b>: only your decor type in range. <b style="color:#a16207">Yellow</b>/<b style="color:${LEVEL_COLORS[2]}">orange</b>/<b style="color:${LEVEL_COLORS[3]}">red</b>: 1/2/3+ other types too. Uncoloured: your type is out of range. Cells with your type are outlined green; other decor cells are grey.</p>
       <h3>Tips in the game</h3>
@@ -706,10 +760,12 @@
       <h3>Limits</h3>
       <ul class="small">
         <li>The game also uses Foursquare and maybe other sources, so some decor places aren't in OSM. The game also updates its map copy only occasionally (most recently October 2026).</li>
+        <li>Cuisine decor (Sushi, Italian, Ramen, Curry, Mexican, Korean) needs an extra lookup on the busy public Overpass server, so it can be slow or unavailable.</li>
+        <li>Waterside covers lakes, ponds and rivers. The sea isn't counted, which may not match the game.</li>
         <li>The cell grid and the polygon rules aren't published. Use <b>Calibrate</b> to log real detector readings and test which model matches.</li>
         <li>Weather and event decor don't depend on location and aren't covered.</li>
       </ul>
-      <p class="muted small">Data © OpenStreetMap contributors (ODbL), via the Overpass API. Tag mapping from Pikipedia's Decor Pikmin page. Unofficial fan tool; not affiliated with Niantic or Nintendo.</p>`;
+      <p class="muted small">Data © OpenStreetMap contributors (ODbL), served by OpenFreeMap (OpenMapTiles schema); cuisine lookups via the Overpass API. Tag mapping from Pikipedia's Decor Pikmin page. Unofficial fan tool; not affiliated with Niantic or Nintendo.</p>`;
   }
 
   // ---- picker ----
@@ -724,12 +780,13 @@
     const items = E.CATEGORIES.filter((c) => !q || c.name.toLowerCase().includes(q) || c.tags.some(([k, v]) => (k + '=' + v).includes(q)) || c.cuisine.some((x) => x.includes(q)))
       .slice().sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0) || a.index - b.index);
     $('#pickList').innerHTML = (state.target ? `<button class="pi" data-id=""><span class="ico">🗺️</span><span>Explore all (no target)</span></button>` : '') +
-      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${c.icon}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/')] : [])].join(', '))}</span></span>
+      items.map((c) => `<button class="pi ${c.id === state.target ? 'on' : ''}" data-id="${c.id}"><span class="ico">${c.icon}</span><span>${html(c.name)}<br><span class="muted small">${html([...c.tags.map((t) => t.join('=')), ...(c.cuisine.length ? ['cuisine=' + c.cuisine.join('/') + ' (extra lookup, can be slow)'] : [])].join(', '))}</span></span>
         <span class="cnt">${counts.get(c.id) ? `<b>${counts.get(c.id)}</b> in view` : ''}</span></button>`).join('');
     $('#pickList').querySelectorAll('.pi').forEach((b) => b.onclick = () => { $('#picker').classList.remove('on'); setTarget(b.dataset.id || null); });
   }
   function setTarget(id) {
     state.target = id;
+    state.nearest = null; nearestToken++;
     runTarget(); persist(); renderAll(); map.redraw(); showTab('spots');
     if (map.zoom < MIN_LOAD_ZOOM) toast('Zoom in to search');
     analyze();
@@ -784,7 +841,8 @@
         const d = state.probeDet;
         if (d && state.target) {
           const only = d.shown.length === 1 && d.shown[0] === state.target;
-          setStatus(only ? `✅ Here: only ${E.CAT[state.target].icon} ${html(E.CAT[state.target].name)}` : `Here: ${d.roadside ? E.ROADSIDE.icon : d.shown.map((id) => E.CAT[id].icon).join(' ')}`);
+          statusState.main = only ? `✅ Here: only ${E.CAT[state.target].icon} ${html(E.CAT[state.target].name)}` : `Here: ${d.roadside ? E.ROADSIDE.icon : d.shown.map((id) => E.CAT[id].icon).join(' ')}`;
+          renderStatus();
         }
       });
     }, (err) => toast('Location error: ' + err.message), { enableHighAccuracy: true, maximumAge: 2000 });
